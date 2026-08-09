@@ -42,7 +42,9 @@ class Config:
 
     # STT backend: "mlx" (Metal, fastest on Apple Silicon) or "faster" (CPU).
     whisper_backend: str = os.getenv("WHISPER_BACKEND", "mlx")
-    whisper_model: str = os.getenv("WHISPER_MODEL", "base.en")
+    # small.en is markedly more accurate than base.en on song/artist names, still
+    # fast on Metal. Use medium.en for max accuracy, tiny.en for max speed.
+    whisper_model: str = os.getenv("WHISPER_MODEL", "small.en")
 
     kokoro_voice: str = os.getenv("KOKORO_VOICE", "bm_george")
     kokoro_model_path: str = os.getenv("KOKORO_MODEL_PATH", "models/kokoro-v1.0.onnx")

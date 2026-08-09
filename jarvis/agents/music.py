@@ -20,15 +20,22 @@ class MusicAgent(BaseJarvisAgent):
         super().__init__(
             llm=llm,
             instructions=(
-                "You control Spotify. When the user wants music, immediately call "
-                "play_song with their requested song, artist, genre, or mood as the "
-                "`query`, using their own words (strip 'play', 'some', 'a', 'any', "
-                "'random', and a trailing 'on spotify'; pass unfamiliar titles "
-                "through unchanged, never substitute a different one). Set loop=true "
-                "if they say repeat, loop, or on repeat. Only if they name nothing "
-                "at all (e.g. just 'play a song' or 'play something') ask 'What "
-                "would you like to hear, sir?' instead. For non-music requests call "
-                "back_to_coordinator. " + VOICE_STYLE
+                "You control Spotify. Always call the tool that matches the "
+                "request; never reply without acting. Map requests to tools:\n"
+                "- play a song/artist/genre/mood -> play_song (query = the user's "
+                "OWN words; strip 'play','some','a','any','random' and a trailing "
+                "'on spotify'; pass unfamiliar titles through, never substitute; "
+                "loop=true only if they say repeat/loop/on repeat)\n"
+                "- pause/stop -> pause_music;  resume/continue/unpause/play again "
+                "-> resume_music;  next/skip -> next_song;  volume -> "
+                "set_music_volume;  turn repeat on/off -> set_loop\n"
+                "- what's playing -> whats_playing\n"
+                "- list/how many playlists or songs -> list_playlists;  play a "
+                "named playlist -> play_playlist;  add the current song to a "
+                "playlist -> add_current_song_to_playlist\n"
+                "- only if the user names nothing to play (just 'play a song' / "
+                "'play something') ask 'What would you like to hear, sir?'\n"
+                "- non-music request -> back_to_coordinator\n" + VOICE_STYLE
             ),
             chat_ctx=chat_ctx,
         )
@@ -71,6 +78,29 @@ class MusicAgent(BaseJarvisAgent):
         except SpotifyError as e:
             return f"error: {e}"
         return f"playing your {pl} playlist"
+
+    @function_tool()
+    async def list_playlists(self, context: RunContext[JarvisContext]) -> str:
+        """List the user's playlists with how many songs each has.
+
+        Use for questions like "what playlists do I have" or "how many songs in
+        each playlist".
+        """
+        try:
+            pls = await asyncio.to_thread(context.userdata.spotify.list_playlists)
+        except SpotifyError as e:
+            return f"error: {e}"
+        if not pls:
+            return "you have no playlists"
+        have_counts = any(c is not None for _, c in pls)
+        if have_counts:
+            listing = ", ".join(
+                f"{name} ({c} songs)" if c is not None else name for name, c in pls
+            )
+        else:
+            listing = ", ".join(name for name, _ in pls)
+        note = "" if have_counts else " (Spotify isn't sharing song counts for this account)"
+        return f"{len(pls)} playlists: {listing}{note}"
 
     @function_tool()
     async def add_current_song_to_playlist(

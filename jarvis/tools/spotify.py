@@ -209,6 +209,36 @@ class SpotifyController:
         r.raise_for_status()
         return r.json()["id"]
 
+    def list_playlists(self) -> list[tuple[str, int | None]]:
+        """Return the user's playlists as (name, track_count). track_count is None
+        when Spotify won't disclose it (some tokens/apps get 403 on track reads)."""
+        token = self._user_token()
+        hdr = {"Authorization": f"Bearer {token}"}
+        rows: list[tuple[str, str, int | None]] = []
+        url = f"{_API}/me/playlists?limit=50"
+        while url:
+            r = requests.get(url, headers=hdr, timeout=10)
+            if r.status_code != 200:
+                raise SpotifyError(f"Playlist list failed ({r.status_code}): {r.text}")
+            body = r.json()
+            for pl in body.get("items", []):
+                name = (pl.get("name") or "").strip()
+                if name:
+                    rows.append((pl["id"], name, (pl.get("tracks") or {}).get("total")))
+            url = body.get("next")
+        # /me/playlists sometimes returns tracks.total = null; try to fill it.
+        out: list[tuple[str, int | None]] = []
+        for pid, name, total in rows:
+            if total is None:
+                try:
+                    rr = requests.get(f"{_API}/playlists/{pid}?fields=tracks(total)", headers=hdr, timeout=10)
+                    if rr.status_code == 200:
+                        total = rr.json().get("tracks", {}).get("total")
+                except Exception:
+                    pass
+            out.append((name, total))
+        return out
+
     def find_playlist(self, name: str) -> tuple[str, str] | None:
         """Return (uri, name) of the user's playlist best-matching `name`."""
         token = self._user_token()
@@ -246,6 +276,11 @@ class SpotifyController:
             json={"uris": [track_uri]},
             timeout=10,
         )
+        if r.status_code == 403:
+            raise SpotifyError(
+                "Spotify denied the playlist edit (403). Re-authorize with playlist "
+                "permissions: run `python -m jarvis.spotify_auth` again."
+            )
         if r.status_code not in (200, 201):
             raise SpotifyError(f"Add to playlist failed ({r.status_code}): {r.text}")
         return track_label, pl_name

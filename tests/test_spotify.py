@@ -153,6 +153,32 @@ def test_add_current_to_playlist(monkeypatch):
     assert posted["url"].endswith("/playlists/pl123/tracks")
 
 
+def test_list_playlists_handles_null_counts(monkeypatch):
+    sc = SpotifyController("id", "secret")
+    monkeypatch.setattr(sc, "_user_token", lambda: "utok")
+    calls = {"n": 0}
+
+    def fake_get(url, headers=None, timeout=None):
+        calls["n"] += 1
+        m = mock.Mock()
+        m.status_code = 200
+        if "/me/playlists" in url:
+            m.json.return_value = {
+                "items": [
+                    {"id": "a", "name": "Focus", "tracks": {"total": 12}},
+                    {"id": "b", "name": "Workout", "tracks": {"total": None}},
+                ],
+                "next": None,
+            }
+        else:  # per-playlist fetch for the null one -> still null (403-like)
+            m.json.return_value = {"tracks": {"total": None}}
+        return m
+
+    monkeypatch.setattr("jarvis.tools.spotify.requests.get", fake_get)
+    out = sc.list_playlists()
+    assert out == [("Focus", 12), ("Workout", None)]
+
+
 def test_playlist_features_need_login(monkeypatch, tmp_path):
     monkeypatch.setattr("jarvis.tools.spotify.TOKENS_PATH", tmp_path / "nope.json")
     sc = SpotifyController("id", "secret")

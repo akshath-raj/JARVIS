@@ -56,12 +56,19 @@ def main() -> int:
         print("Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in .env first.")
         return 1
 
+    # Remove any stale token so we always request a fresh grant with all scopes.
+    try:
+        TOKENS_PATH.unlink()
+    except FileNotFoundError:
+        pass
     params = urllib.parse.urlencode({
         "client_id": config.spotify_client_id,
         "response_type": "code",
         "redirect_uri": _REDIRECT,
         "scope": OAUTH_SCOPES,
+        "show_dialog": "true",  # force the consent screen so all scopes are granted
     })
+    print(f"Requesting scopes: {OAUTH_SCOPES}")
     url = f"{_AUTH_URL}?{params}"
     print(f"Opening browser to authorize...\nIf it doesn't open, visit:\n{url}\n")
     webbrowser.open(url)
