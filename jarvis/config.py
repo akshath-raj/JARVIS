@@ -30,10 +30,11 @@ class Config:
     hybrid_local_actions: bool = _truthy(os.getenv("JARVIS_HYBRID_LOCAL_ACTIONS", "1"))
 
     # ── Local pipeline (per-task models; smaller = faster) ─────────────
-    # Chat / router / general reasoning.
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen3:8b")
-    # Device-action agents — a compact NON-THINKING model for snappy tool calls
-    # (thinking models like qwen3 burn seconds "reasoning" before every call).
+    # Chat / router / general reasoning. Default is a compact NON-THINKING model so
+    # local mode stays snappy (qwen3 "thinks" for 10-40s per turn — bad for voice).
+    # Bump to qwen2.5:7b-instruct or qwen3:8b for stronger answers if you prefer.
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
+    # Device-action agents — compact non-thinking model for snappy tool calls.
     tool_model: str = os.getenv("JARVIS_TOOL_MODEL", "qwen2.5:3b-instruct")
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 
