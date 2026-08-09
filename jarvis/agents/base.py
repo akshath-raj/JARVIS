@@ -5,9 +5,12 @@ every turn after a handoff) respect "Hey Jarvis" without duplicating logic.
 """
 from __future__ import annotations
 
+import logging
 from typing import AsyncIterable, Optional
 
-from livekit.agents import Agent, ModelSettings, stt
+from livekit.agents import Agent, ModelSettings, StopResponse, llm, stt
+
+logger = logging.getLogger("jarvis.agent")
 
 # Appended to every agent's instructions. Keeps replies speakable and disables
 # qwen3's chain-of-thought for low latency (harmless for cloud models).
@@ -39,3 +42,15 @@ class BaseJarvisAgent(Agent):
 
         async for ev in Agent.default.stt_node(self, gated(), model_settings):
             yield ev
+
+    async def on_user_turn_completed(
+        self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
+    ) -> None:
+        """Relevance gate: stay silent if the utterance isn't directed at JARVIS."""
+        gate = getattr(self.session.userdata, "relevance", None)
+        if gate is None or not gate.enabled:
+            return
+        text = (new_message.text_content or "").strip()
+        if not await gate.is_directed(turn_ctx, text):
+            logger.info("Ignoring undirected utterance: %r", text)
+            raise StopResponse()

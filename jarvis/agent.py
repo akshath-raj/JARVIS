@@ -24,6 +24,7 @@ from jarvis import pipeline
 from jarvis.agents import RouterAgent
 from jarvis.config import config
 from jarvis.context import JarvisContext
+from jarvis.relevance import RelevanceGate
 from jarvis.tools.spotify import SpotifyController
 from jarvis.wake import WakeGate
 
@@ -47,6 +48,11 @@ async def entrypoint(ctx: JobContext) -> None:
             model=config.wake_model,
             threshold=config.wake_threshold,
             active_seconds=config.wake_active_seconds,
+        ),
+        relevance=RelevanceGate(
+            enabled=config.relevance_enabled,
+            model=config.relevance_model,
+            base_url=config.ollama_base_url,
         ),
         search_mode=config.spotify_search_mode,
         local_llm=pipeline.local_action_llm(),

@@ -29,11 +29,32 @@ Voice pipeline (all local):
 mic ─► Silero VAD ─► Whisper STT ─► qwen3 (Ollama) ─► Kokoro TTS ─► speaker
 ```
 
-Wake word gates the whole session:
+JARVIS listens continuously; a relevance gate (not a wake word) decides what to
+answer:
 ```
-mic ─► [Hey Jarvis? openWakeWord] ─► VAD/turn-detect ─► STT ─► LLM ─► TTS ─► speaker
-        (drops audio until woken)
+mic ─► VAD/turn-detect ─► STT ─► [relevance gate] ─► LLM ─► TTS ─► speaker
+                                  is this directed at JARVIS?
+                                  (tiny local model, context-aware) ─ no ─► stay silent
 ```
+No "Hey Jarvis" needed by default. A small fast model looks at the conversation
+history and the new utterance and decides if it's addressed to JARVIS vs.
+background chatter/noise (fails open, so it never goes unexpectedly mute). Set
+`JARVIS_WAKE=1` to use the "Hey Jarvis" wake word instead, or `JARVIS_RELEVANCE=0`
+to reply to everything.
+
+### Per-task models (smaller = faster)
+Each job uses a right-sized local model, independently swappable:
+
+| Task | Default | Env |
+|---|---|---|
+| Chat / routing / reasoning | `qwen3:8b` | `OLLAMA_MODEL` |
+| Device actions (music/calendar/files) | `qwen3:4b` | `JARVIS_TOOL_MODEL` |
+| Relevance gate | `qwen3:1.7b` | `JARVIS_RELEVANCE_MODEL` |
+
+All are Qwen3 (Apache-2.0, native tool-calling). For even stronger function-calling
+you can point `JARVIS_TOOL_MODEL` at a fine-tuned model, e.g. Katanemo
+`Arch-Function-3B`, MadeAgents `Hammer2.1-3b`, or Salesforce `xLAM-2-1b`
+(pull via `ollama pull hf.co/<repo>` — ensure the GGUF ships a tool template).
 
 Multi-agent hub-and-spoke (no single agent does everything — control is handed off):
 ```

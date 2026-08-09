@@ -1,0 +1,117 @@
+"""Tests for the Spotify controller (search parsing + play-path routing).
+
+Network (requests) and AppleScript (subprocess) are mocked, so these run
+anywhere. A live end-to-end test is included but skipped unless
+RUN_SPOTIFY_LIVE=1 (it actually plays music on this Mac).
+"""
+from __future__ import annotations
+
+import os
+from unittest import mock
+
+import pytest
+
+from jarvis.tools.spotify import PlayResult, SpotifyController, SpotifyError, Track
+
+ITEM = {
+    "uri": "spotify:track:abc",
+    "name": "Bohemian Rhapsody",
+    "artists": [{"name": "Queen"}],
+}
+
+
+def _resp(payload, status=200):
+    m = mock.Mock()
+    m.status_code = status
+    m.json.return_value = payload
+    return m
+
+
+def _token():
+    return _resp({"access_token": "tok", "expires_in": 3600})
+
+
+# ── Search (Web API) ──────────────────────────────────────────────────────
+def test_search_track_parses_top_hit():
+    sc = SpotifyController("id", "secret")
+    with mock.patch("jarvis.tools.spotify.requests.post", return_value=_token()), mock.patch(
+        "jarvis.tools.spotify.requests.get", return_value=_resp({"tracks": {"items": [ITEM]}})
+    ):
+        t = sc.search_track("bohemian rhapsody queen")
+    assert t == Track("spotify:track:abc", "Bohemian Rhapsody", "Queen")
+    assert t.label == "Bohemian Rhapsody by Queen"
+
+
+def test_search_track_no_results_returns_none():
+    sc = SpotifyController("id", "secret")
+    with mock.patch("jarvis.tools.spotify.requests.post", return_value=_token()), mock.patch(
+        "jarvis.tools.spotify.requests.get", return_value=_resp({"tracks": {"items": []}})
+    ):
+        assert sc.search_track("zzz nonsense") is None
+
+
+def test_search_requires_credentials():
+    sc = SpotifyController()  # no keys
+    with pytest.raises(SpotifyError):
+        sc.search_track("anything")
+
+
+# ── play_query routing (app first, web fallback) ──────────────────────────
+def test_web_mode_searches_then_plays_uri(monkeypatch):
+    sc = SpotifyController("id", "secret")
+    monkeypatch.setattr(sc, "search_track", lambda q: Track("spotify:track:abc", "Bohemian Rhapsody", "Queen"))
+    played = {}
+    monkeypatch.setattr(sc, "ensure_running", lambda: played.__setitem__("ran", True))
+    monkeypatch.setattr(sc, "play_uri", lambda uri: played.__setitem__("uri", uri))
+
+    res = sc.play_query("bohemian rhapsody", mode="web")
+    assert res == PlayResult(label="Bohemian Rhapsody by Queen", source="web")
+    assert played == {"ran": True, "uri": "spotify:track:abc"}
+
+
+def test_auto_falls_back_to_web_when_app_fails(monkeypatch):
+    sc = SpotifyController("id", "secret")
+    monkeypatch.setattr(sc, "_try_play_via_app", lambda q: False)  # app couldn't play
+    monkeypatch.setattr(sc, "search_track", lambda q: Track("spotify:track:abc", "Bohemian Rhapsody", "Queen"))
+    monkeypatch.setattr(sc, "ensure_running", lambda: None)
+    played = {}
+    monkeypatch.setattr(sc, "play_uri", lambda uri: played.__setitem__("uri", uri))
+
+    res = sc.play_query("bohemian rhapsody", mode="auto")
+    assert res.source == "web"
+    assert played["uri"] == "spotify:track:abc"
+
+
+def test_auto_uses_app_when_it_succeeds(monkeypatch):
+    sc = SpotifyController()  # no web keys at all
+    monkeypatch.setattr(sc, "_try_play_via_app", lambda q: True)
+    monkeypatch.setattr(sc, "current_track", lambda: "Bohemian Rhapsody by Queen")
+
+    res = sc.play_query("bohemian rhapsody", mode="auto")
+    assert res == PlayResult(label="Bohemian Rhapsody by Queen", source="app")
+
+
+def test_auto_errors_when_app_fails_and_no_key(monkeypatch):
+    sc = SpotifyController()  # no keys
+    monkeypatch.setattr(sc, "_try_play_via_app", lambda q: False)
+    with pytest.raises(SpotifyError):
+        sc.play_query("x", mode="auto")
+
+
+def test_volume_clamped(monkeypatch):
+    sc = SpotifyController()
+    scripts = []
+    monkeypatch.setattr(sc, "_osa", lambda s: scripts.append(s) or "")
+    sc.set_volume(250)
+    assert "set sound volume to 100" in scripts[0]
+
+
+# ── Live (opt-in) ─────────────────────────────────────────────────────────
+@pytest.mark.skipif(os.getenv("RUN_SPOTIFY_LIVE") != "1", reason="live test; set RUN_SPOTIFY_LIVE=1")
+def test_live_play():
+    from jarvis.config import config
+
+    sc = SpotifyController(config.spotify_client_id, config.spotify_client_secret)
+    res = sc.play_query("bohemian rhapsody queen", mode=config.spotify_search_mode)
+    assert res.label
+    assert sc.player_state() == "playing"

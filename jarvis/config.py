@@ -29,8 +29,11 @@ class Config:
     # LOCAL LLM for reliable, private tool execution. Answering stays cloud.
     hybrid_local_actions: bool = _truthy(os.getenv("JARVIS_HYBRID_LOCAL_ACTIONS", "1"))
 
-    # ── Local pipeline ─────────────────────────────────────────────────
+    # ── Local pipeline (per-task models; smaller = faster) ─────────────
+    # Chat / router / general reasoning.
     ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen3:8b")
+    # Device-action agents (music/calendar/files) — tool-calling focused.
+    tool_model: str = os.getenv("JARVIS_TOOL_MODEL", "qwen3:4b")
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 
     # STT backend: "mlx" (Metal, fastest on Apple Silicon) or "faster" (CPU).
@@ -56,11 +59,17 @@ class Config:
     # Use the LiveKit MultilingualModel turn detector (better than VAD-only).
     use_turn_detector: bool = _truthy(os.getenv("JARVIS_TURN_DETECTOR", "1"))
 
-    # ── Wake word ──────────────────────────────────────────────────────
-    wake_enabled: bool = _truthy(os.getenv("JARVIS_WAKE", "1"))
+    # ── Activation ─────────────────────────────────────────────────────
+    # Wake word is OFF by default: JARVIS listens continuously and a relevance
+    # gate decides whether each utterance is actually addressed to it.
+    wake_enabled: bool = _truthy(os.getenv("JARVIS_WAKE", "0"))
     wake_model: str = os.getenv("JARVIS_WAKE_MODEL", "hey_jarvis")
     wake_threshold: float = float(os.getenv("JARVIS_WAKE_THRESHOLD", "0.5"))
     wake_active_seconds: float = float(os.getenv("JARVIS_WAKE_WINDOW", "12"))
+
+    # Context-aware relevance gate (directed-speech vs background noise).
+    relevance_enabled: bool = _truthy(os.getenv("JARVIS_RELEVANCE", "1"))
+    relevance_model: str = os.getenv("JARVIS_RELEVANCE_MODEL", "qwen3:1.7b")
 
     # ── Spotify ────────────────────────────────────────────────────────
     spotify_client_id: str = os.getenv("SPOTIFY_CLIENT_ID", "")
