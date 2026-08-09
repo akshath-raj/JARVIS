@@ -30,10 +30,10 @@ class Config:
     hybrid_local_actions: bool = _truthy(os.getenv("JARVIS_HYBRID_LOCAL_ACTIONS", "1"))
 
     # ── Local pipeline (per-task models; smaller = faster) ─────────────
-    # Chat / router / general reasoning. Default is a compact NON-THINKING model so
-    # local mode stays snappy (qwen3 "thinks" for 10-40s per turn — bad for voice).
-    # Bump to qwen2.5:7b-instruct or qwen3:8b for stronger answers if you prefer.
-    ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
+    # The single agent's LLM (answers + Spotify tool-calls). qwen2.5:7b-instruct is
+    # non-thinking (fast, no 10-40s qwen3 "thinking") and reliable at tool calls on
+    # arbitrary songs. Drop to :3b for speed (less reliable) or up for more quality.
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
     # Device-action agents — non-thinking, reliable tool-caller on ANY song/artist
     # (7B: 8/8 in testing; 3B misfired — refused some titles, hallucinated loop).
     # ~2s/call. Drop to qwen2.5:3b-instruct for speed if you accept less accuracy.

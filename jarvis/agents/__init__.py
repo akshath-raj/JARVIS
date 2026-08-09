@@ -1,10 +1,13 @@
-"""JARVIS multi-agent mesh: a thin router that hands off to focused specialists.
+"""JARVIS agent.
 
-Sandboxed by design: the only capability that touches the machine is Spotify
-playback control. There are no file, shell, calendar, or delete/remove tools.
+A single agent answers general questions and controls Spotify. (An earlier
+router+specialist handoff mesh was removed: agent handoffs were unreliable with
+local models — the model emitted tool calls as text after a handoff instead of
+executing them.)
+
+Sandboxed: the only capability that touches the machine is Spotify. No file,
+shell, calendar, or delete/remove tools.
 """
-from jarvis.agents.chat import ChatAgent
-from jarvis.agents.music import MusicAgent
-from jarvis.agents.router import RouterAgent
+from jarvis.agents.jarvis_agent import JarvisAgent
 
-__all__ = ["RouterAgent", "ChatAgent", "MusicAgent"]
+__all__ = ["JarvisAgent"]

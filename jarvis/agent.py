@@ -1,13 +1,11 @@
-"""JARVIS entrypoint — fully-local (or cloud) multi-agent voice assistant.
+"""JARVIS entrypoint — local (or cloud) voice assistant.
 
 Modes (JARVIS_MODE): 0 = LOCAL (Whisper + Ollama + Kokoro), 1 = CLOUD
-(Deepgram + Cerebras/OpenAI + Cartesia).
+(Deepgram STT+TTS + Cerebras/OpenAI).
 
-Agents: RouterAgent (coordinator) hands off to ChatAgent, MusicAgent,
-CalendarAgent, or FileAgent; specialists hand back to the coordinator to
-re-route. Shared state (Spotify controller, wake gate) lives in session.userdata.
-
-Wake word "Hey Jarvis" gates the whole session (toggle with JARVIS_WAKE=0).
+A single JarvisAgent answers questions and controls Spotify. Wake word ("jarvis"
+/ "hey jarvis") gates the session with smart follow-up (toggle JARVIS_WAKE=0).
+Shared state (Spotify controller, wake state) lives in session.userdata.
 
 Run locally in your terminal (uses your mic + speakers, no LiveKit cloud):
 
@@ -21,9 +19,9 @@ from livekit.agents import AgentSession, JobContext, JobProcess, WorkerOptions, 
 from livekit.plugins import silero
 
 from jarvis import pipeline
-from jarvis.agents import RouterAgent
-from jarvis.config import config
 from jarvis.activation import WakeController
+from jarvis.agents import JarvisAgent
+from jarvis.config import config
 from jarvis.context import JarvisContext
 from jarvis.tools.spotify import SpotifyController
 
@@ -48,7 +46,6 @@ async def entrypoint(ctx: JobContext) -> None:
             followup_seconds=config.wake_followup_seconds,
         ),
         search_mode=config.spotify_search_mode,
-        local_llm=pipeline.local_action_llm(),
     )
 
     session = AgentSession[JarvisContext](
@@ -67,8 +64,8 @@ async def entrypoint(ctx: JobContext) -> None:
         if item is not None and getattr(item, "role", None) == "assistant":
             userdata.activation.note_reply(item.text_content or "")
 
-    # RouterAgent.on_enter delivers the greeting.
-    await session.start(agent=RouterAgent(), room=ctx.room)
+    # JarvisAgent.on_enter delivers the greeting.
+    await session.start(agent=JarvisAgent(), room=ctx.room)
 
 
 if __name__ == "__main__":

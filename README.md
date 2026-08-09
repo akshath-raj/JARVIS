@@ -8,19 +8,14 @@ It runs **fully local by default**, or can switch to a cloud pipeline.
 
 | | `0` LOCAL (default) | `1` CLOUD |
 |---|---|---|
-| STT | Whisper (`mlx`/`faster`) | Deepgram `nova-3` |
-| LLM | Ollama `qwen3:8b` | Cerebras `gpt-oss-120b` → OpenAI |
+| STT | Whisper mlx (`small.en`) | Deepgram `nova-3` |
+| LLM | Ollama `qwen2.5:7b-instruct` | Cerebras `gpt-oss-120b` → OpenAI |
 | TTS | Kokoro-82M | Deepgram Aura-2 (`aura-2-draco-en`) |
 
 LOCAL keeps everything on-device — nothing the mic captures leaves the machine
 (the only egress is the optional Spotify catalog search, a song title). CLOUD
 mirrors the reference "live JARVIS" stack; the LLM prefers Cerebras and falls
 back to OpenAI based on which API key is set.
-
-**Hybrid (default in cloud mode):** device-action agents (music, calendar, files)
-run their tool-calling on the **local** LLM for reliable, private on-device
-actions, while STT/TTS and general answering use the cloud. Requires Ollama
-running; disable with `JARVIS_HYBRID_LOCAL_ACTIONS=0`.
 
 ## Architecture
 
@@ -58,40 +53,23 @@ brew services restart ollama
 STT uses `fp16` mlx-whisper on Metal. Want lighter still? Point a model env at a
 lower-bit tag, e.g. `JARVIS_RELEVANCE_MODEL=qwen3:1.7b-q4_0`.
 
-### Per-task models (smaller = faster)
-Each job uses a right-sized local model, independently swappable:
+### Model (local)
+The local LLM is **`qwen2.5:7b-instruct`** (`OLLAMA_MODEL`). It's non-thinking, so
+tool calls are immediate — Qwen3 is a *reasoning* model that emits a 10–40s
+"thinking" trace before every tool call (unusable for voice). 7B is reliable at
+tool-calling on arbitrary songs; drop to `qwen2.5:3b-instruct` for speed (less
+reliable) or up for more quality.
 
-| Task | Default | Env |
-|---|---|---|
-| Chat / routing / reasoning | `qwen2.5:3b-instruct` | `OLLAMA_MODEL` |
-| Device tool-calling (Spotify) | `qwen2.5:7b-instruct` | `JARVIS_TOOL_MODEL` |
-
-**Why non-thinking Qwen2.5 (not Qwen3):** Qwen3 is a *reasoning* model — it emits a
-long "thinking" trace before every tool call (10–40s of latency), which is
-unusable for voice. Qwen2.5-Instruct is non-thinking, so tool calls are immediate.
-The device model is **7B** because 3B misfired on arbitrary songs/artists (it asked
-for clarification or even faked "now playing" without calling the tool); 7B is
-reliable and still non-thinking (fast). Tune via `JARVIS_TOOL_MODEL`
-(`qwen2.5:3b-instruct` for speed, `qwen3:8b` for max capability, or a fine-tuned
-caller like Katanemo `Arch-Function-3B` via `ollama pull hf.co/<repo>`).
-
-Multi-agent hub-and-spoke (no single agent does everything — control is handed off):
-```
-                 ┌──────────────┐
-   session ─────►│ RouterAgent  │  greets, routes only
-                 └──────┬───────┘
-          transfer_to_* │ ▲ back_to_coordinator
-             ┌──────────┴──────────┐
-             ▼                     ▼
-       ┌──────────┐         ┌────────────┐
-       │ ChatAgent│         │ MusicAgent │
-       │ Q&A only │         │  Spotify   │
-       └──────────┘         └────────────┘
-```
-The coordinator routes; each specialist owns its own tools and hands control
-**back** to the coordinator to switch domains. Shared state lives in
-`session.userdata`; handoffs pass conversation history via `chat_ctx` but reset
-each agent's own instructions.
+### One agent, not a mesh
+JARVIS is a **single agent** that answers questions and controls Spotify. An
+earlier router+specialist handoff design was removed: with local models, agent
+handoffs were unreliable — after a handoff the model would emit the tool call as
+plain text instead of executing it. Two hard-won lessons baked in here:
+- **Single agent + all tools** executes reliably; handoffs don't (locally).
+- **Keep the system prompt lean and behavioral.** Enumerating tools/JSON in the
+  prompt makes local models *narrate* the call ("now playing X") without actually
+  calling the tool. The tool docstrings describe usage; the prompt just sets
+  behavior.
 
 ### Spotify capabilities
 Playback runs **in the background** — Spotify is launched hidden (`open -g -j`) and
