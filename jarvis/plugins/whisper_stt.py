@@ -1,51 +1,85 @@
-"""Local STT plugin for LiveKit Agents, backed by faster-whisper.
+"""Local STT plugin for LiveKit Agents.
 
-faster-whisper is non-streaming, so this STT advertises `streaming=False`.
-Combined with a VAD on the AgentSession, LiveKit buffers each utterance and
-calls `_recognize_impl` once per turn (the StreamAdapter pattern).
+Two backends, selected by `backend`:
+  * "mlx"    -> mlx-whisper, Metal-accelerated on Apple Silicon (lowest latency).
+  * "faster" -> faster-whisper (CTranslate2), CPU int8, portable fallback.
 
-On Apple Silicon this runs on CPU (int8). For a snappier turn use base.en /
-small.en; upgrade path is whisper.cpp (Metal) or mlx-whisper.
+Both are non-streaming, so this advertises `streaming=False`; combined with a VAD
+on the AgentSession, LiveKit buffers each utterance and calls `_recognize_impl`
+once per turn.
 """
 from __future__ import annotations
+
+import logging
 
 import numpy as np
 from livekit import rtc
 from livekit.agents import stt, utils
 from livekit.agents.types import DEFAULT_API_CONNECT_OPTIONS, APIConnectOptions
 
+logger = logging.getLogger("jarvis.stt")
+
 _WHISPER_SR = 16000
+
+# HF repos for the Metal (mlx) models, keyed by the faster-whisper-style name.
+_MLX_REPOS = {
+    "tiny.en": "mlx-community/whisper-tiny.en-mlx",
+    "base.en": "mlx-community/whisper-base.en-mlx",
+    "small.en": "mlx-community/whisper-small.en-mlx",
+    "medium.en": "mlx-community/whisper-medium.en-mlx",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+}
 
 
 class WhisperSTT(stt.STT):
-    def __init__(self, *, model: str = "base.en", language: str = "en"):
+    def __init__(self, *, model: str = "base.en", language: str = "en", backend: str = "mlx"):
         super().__init__(
             capabilities=stt.STTCapabilities(streaming=False, interim_results=False)
         )
+        self._language = language
+        self._backend = backend
+        self._faster = None
+        self._mlx_repo = None
+
+        if backend == "mlx":
+            try:
+                import mlx_whisper  # noqa: F401  (import proves availability)
+
+                self._mlx_repo = _MLX_REPOS.get(model, model)
+                logger.info("STT: mlx-whisper %s (Metal)", self._mlx_repo)
+                return
+            except Exception as e:
+                logger.warning("mlx-whisper unavailable (%s); using faster-whisper.", e)
+                self._backend = "faster"
+
         from faster_whisper import WhisperModel
 
-        # int8 on CPU is the fast, low-memory option on Apple Silicon.
-        self._model = WhisperModel(model, device="cpu", compute_type="int8")
-        self._language = language
+        self._faster = WhisperModel(model, device="cpu", compute_type="int8")
+        logger.info("STT: faster-whisper %s (CPU int8)", model)
 
     async def _recognize_impl(
         self,
         buffer: utils.AudioBuffer,
         *,
-        language: str | None = None,
+        language=None,
         conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
     ) -> stt.SpeechEvent:
         lang = language if isinstance(language, str) else self._language
         frame = rtc.combine_audio_frames(buffer)
         samples = self._to_mono_16k_float32(frame)
 
-        segments, _ = self._model.transcribe(
-            samples,
-            language=lang,
-            beam_size=1,          # greedy = lowest latency
-            vad_filter=False,     # VAD already handled upstream
-        )
-        text = " ".join(seg.text for seg in segments).strip()
+        if self._backend == "mlx":
+            import mlx_whisper
+
+            result = mlx_whisper.transcribe(
+                samples, path_or_hf_repo=self._mlx_repo, language=lang, fp16=True
+            )
+            text = (result.get("text") or "").strip()
+        else:
+            segments, _ = self._faster.transcribe(
+                samples, language=lang, beam_size=1, vad_filter=False
+            )
+            text = " ".join(seg.text for seg in segments).strip()
 
         return stt.SpeechEvent(
             type=stt.SpeechEventType.FINAL_TRANSCRIPT,

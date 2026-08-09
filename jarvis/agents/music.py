@@ -5,14 +5,14 @@ start) rather than re-creating it on every handoff.
 """
 from __future__ import annotations
 
-from livekit.agents import Agent, ChatContext, RunContext, function_tool
+from livekit.agents import ChatContext, RunContext, function_tool
 
-from jarvis.agents.base import VOICE_STYLE
+from jarvis.agents.base import VOICE_STYLE, BaseJarvisAgent
 from jarvis.context import JarvisContext
 from jarvis.tools.spotify import SpotifyError
 
 
-class MusicAgent(Agent):
+class MusicAgent(BaseJarvisAgent):
     def __init__(self, chat_ctx: ChatContext | None = None) -> None:
         super().__init__(
             instructions=(
@@ -20,13 +20,13 @@ class MusicAgent(Agent):
                 "rather than describing what you would do. After an action, confirm "
                 "briefly (e.g. \"Now playing Bohemian Rhapsody by Queen\"). If a tool "
                 "returns an error, apologise briefly and say what went wrong. If the "
-                "user switches to a non-music topic, call transfer_to_chat. " + VOICE_STYLE
+                "user switches to a non-music topic, call back_to_coordinator. "
+                + VOICE_STYLE
             ),
             chat_ctx=chat_ctx,
         )
 
     async def on_enter(self) -> None:
-        # Act on the music request already sitting in the conversation history.
         await self.session.generate_reply()
 
     # ---- Spotify tools ---------------------------------------------------
@@ -89,8 +89,8 @@ class MusicAgent(Agent):
             return f"error: {e}"
 
     @function_tool()
-    async def transfer_to_chat(self, context: RunContext[JarvisContext]):
-        """Hand off to the conversation specialist for non-music questions."""
-        from jarvis.agents.chat import ChatAgent
+    async def back_to_coordinator(self, context: RunContext[JarvisContext]):
+        """Hand control back to the coordinator for non-music requests."""
+        from jarvis.agents.router import RouterAgent
 
-        return ChatAgent(chat_ctx=self.chat_ctx.copy(exclude_instructions=True))
+        return RouterAgent(chat_ctx=self.chat_ctx.copy(exclude_instructions=True))

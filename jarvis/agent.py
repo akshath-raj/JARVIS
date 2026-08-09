@@ -1,11 +1,13 @@
-"""JARVIS entrypoint — fully-local, multi-agent voice assistant.
+"""JARVIS entrypoint — fully-local (or cloud) multi-agent voice assistant.
 
-Pipeline:  mic -> Silero VAD -> Whisper (STT) -> qwen3 via Ollama (LLM)
-           -> Kokoro (TTS) -> speaker
+Modes (JARVIS_MODE): 0 = LOCAL (Whisper + Ollama + Kokoro), 1 = CLOUD
+(Deepgram + Cerebras/OpenAI + Cartesia).
 
-Agents:    RouterAgent (coordinator) hands off to ChatAgent (general Q&A) or
-           MusicAgent (Spotify). Specialists can hand off to each other. The
-           shared SpotifyController lives in session.userdata.
+Agents: RouterAgent (coordinator) hands off to ChatAgent, MusicAgent,
+CalendarAgent, or FileAgent; specialists hand back to the coordinator to
+re-route. Shared state (Spotify controller, wake gate) lives in session.userdata.
+
+Wake word "Hey Jarvis" gates the whole session (toggle with JARVIS_WAKE=0).
 
 Run locally in your terminal (uses your mic + speakers, no LiveKit cloud):
 
@@ -15,40 +17,47 @@ from __future__ import annotations
 
 import logging
 
-from livekit.agents import AgentSession, JobContext, WorkerOptions, cli
-from livekit.plugins import openai, silero
+from livekit.agents import AgentSession, JobContext, JobProcess, WorkerOptions, cli
+from livekit.plugins import silero
 
+from jarvis import pipeline
 from jarvis.agents import RouterAgent
 from jarvis.config import config
 from jarvis.context import JarvisContext
-from jarvis.plugins.kokoro_tts import KokoroTTS
-from jarvis.plugins.whisper_stt import WhisperSTT
 from jarvis.tools.spotify import SpotifyController
+from jarvis.wake import WakeGate
 
 logger = logging.getLogger("jarvis")
 
 
+def prewarm(proc: JobProcess) -> None:
+    # Load VAD once per worker process.
+    proc.userdata["vad"] = silero.VAD.load(min_silence_duration=0.4)
+
+
 async def entrypoint(ctx: JobContext) -> None:
+    logger.info("JARVIS starting — mode: %s", pipeline.describe())
+
     userdata = JarvisContext(
         spotify=SpotifyController(
             config.spotify_client_id, config.spotify_client_secret
+        ),
+        wake=WakeGate(
+            enabled=config.wake_enabled,
+            model=config.wake_model,
+            threshold=config.wake_threshold,
+            active_seconds=config.wake_active_seconds,
         ),
         search_mode=config.spotify_search_mode,
     )
 
     session = AgentSession[JarvisContext](
         userdata=userdata,
-        stt=WhisperSTT(model=config.whisper_model),
-        llm=openai.LLM.with_ollama(
-            model=config.ollama_model,
-            base_url=config.ollama_base_url,
-        ),
-        tts=KokoroTTS(
-            model_path=config.kokoro_model_path,
-            voices_path=config.kokoro_voices_path,
-            voice=config.kokoro_voice,
-        ),
-        vad=silero.VAD.load(min_silence_duration=0.4),
+        stt=pipeline.build_stt(),
+        llm=pipeline.build_llm(),
+        tts=pipeline.build_tts(),
+        turn_detection=pipeline.build_turn_detection(),
+        vad=ctx.proc.userdata.get("vad") or silero.VAD.load(min_silence_duration=0.4),
     )
 
     # RouterAgent.on_enter delivers the greeting.
@@ -57,4 +66,4 @@ async def entrypoint(ctx: JobContext) -> None:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, prewarm_fnc=prewarm))

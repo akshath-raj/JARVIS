@@ -1,17 +1,21 @@
-# JARVIS — a fully-local voice AI assistant
+# JARVIS — a voice AI assistant (local-first, cloud-optional)
 
-A completely on-device, voice-enabled assistant in the spirit of Iron Man's JARVIS.
-Speech-to-text, reasoning, and text-to-speech all run locally on your Mac. It answers
-general questions and controls apps — starting with Spotify (search + play).
+A voice-enabled assistant in the spirit of Iron Man's JARVIS. Wake it with
+**"Hey Jarvis,"** ask general questions, and control apps — starting with Spotify.
+It runs **fully local by default**, or can switch to a cloud pipeline.
 
-## What stays local vs. what touches the network
+## Two modes (`JARVIS_MODE`)
 
-- **100% local:** wake/turn detection, speech-to-text, the LLM, text-to-speech.
-  Nothing the microphone captures ever leaves the machine.
-- **Only network call:** the Spotify **catalog search** (we send a song title to
-  Spotify's API to resolve it to a track). Playback itself is local, driven by
-  AppleScript against the Spotify desktop app. Spotify is a cloud streaming service,
-  so its audio comes from the network regardless — but your voice never does.
+| | `0` LOCAL (default) | `1` CLOUD |
+|---|---|---|
+| STT | Whisper (`mlx`/`faster`) | Deepgram `nova-3` |
+| LLM | Ollama `qwen3:8b` | Cerebras `gpt-oss-120b` → OpenAI |
+| TTS | Kokoro-82M | Cartesia `sonic-3` |
+
+LOCAL keeps everything on-device — nothing the mic captures leaves the machine
+(the only egress is the optional Spotify catalog search, a song title). CLOUD
+mirrors the reference "live JARVIS" stack; the LLM prefers Cerebras and falls
+back to OpenAI based on which API key is set.
 
 ## Architecture
 
@@ -20,32 +24,29 @@ Voice pipeline (all local):
 mic ─► Silero VAD ─► Whisper STT ─► qwen3 (Ollama) ─► Kokoro TTS ─► speaker
 ```
 
-Multi-agent mesh (no single agent does everything — control is handed off):
+Wake word gates the whole session:
 ```
-                 ┌──────────────┐
-   session ─────►│ RouterAgent  │  greets, decides intent, routes only
-                 └──────┬───────┘
-              transfer_to_*  │
-             ┌──────────────┴──────────────┐
-             ▼                             ▼
-      ┌────────────┐   transfer_to_music  ┌────────────┐
-      │  ChatAgent │◄────────────────────►│ MusicAgent │
-      │ general Q&A│   transfer_to_chat   │  Spotify   │
-      └────────────┘                      └─────┬──────┘
-                                                │ tools
-                                 Spotify (search: app UI / Web API,
-                                          playback: AppleScript)
+mic ─► [Hey Jarvis? openWakeWord] ─► VAD/turn-detect ─► STT ─► LLM ─► TTS ─► speaker
+        (drops audio until woken)
 ```
-The shared `SpotifyController` lives in `session.userdata`; handoffs pass
-conversation history via `chat_ctx` but reset each agent's own instructions.
 
-| Layer         | Tech                                   |
-|---------------|----------------------------------------|
-| Orchestration | LiveKit Agents (console mode, local)   |
-| VAD           | Silero                                 |
-| STT           | faster-whisper (`base.en` default)     |
-| LLM           | Ollama · `qwen3:8b` (tool calling)     |
-| TTS           | Kokoro-82M (ONNX), British male voice  |
+Multi-agent hub-and-spoke (no single agent does everything — control is handed off):
+```
+                        ┌──────────────┐
+        session ───────►│ RouterAgent  │  greets, routes only
+                        └──────┬───────┘
+                     transfer_to_* │ ▲ back_to_coordinator
+          ┌───────────┬───────────┼───────────┬───────────┐
+          ▼           ▼           ▼           ▼
+    ┌──────────┐ ┌─────────┐ ┌──────────┐ ┌─────────┐
+    │ ChatAgent│ │MusicAgent│ │ Calendar │ │  Files  │
+    │ Q&A      │ │ Spotify  │ │ (macOS)  │ │(Spotlight)│
+    └──────────┘ └─────────┘ └──────────┘ └─────────┘
+```
+The coordinator routes; each specialist owns its own tools and hands control
+**back** to the coordinator to switch domains. Shared state (`SpotifyController`,
+wake gate) lives in `session.userdata`; handoffs pass conversation history via
+`chat_ctx` but reset each agent's own instructions.
 
 ## Setup
 
@@ -84,12 +85,19 @@ Make sure the **Spotify desktop app is installed and logged in** (Premium recomm
 source .venv/bin/activate
 python -m jarvis.agent console
 ```
-Then talk: *"Play Bohemian Rhapsody by Queen."* · *"Pause."* · *"What's playing?"* ·
+Say **"Hey Jarvis"**, then your request (follow-ups within ~12s skip the wake word):
+*"Play Bohemian Rhapsody by Queen."* · *"Pause."* · *"What's playing?"* ·
+*"What's on my calendar today?"* · *"Find my budget spreadsheet."* ·
 *"What's the tallest mountain in the world?"*
 
+Set `JARVIS_WAKE=0` for always-listening, or `JARVIS_MODE=1` (with cloud keys in
+`.env`) for the cloud pipeline.
+
 ## Roadmap
-- [x] Phase 1: local voice loop + Spotify search/play (this)
-- [ ] Wake word ("Hey Jarvis") via openWakeWord
-- [ ] Multi-agent handoff (dedicated Spotify / calendar / file agents)
-- [ ] More apps (calendar, mail, system control)
-- [ ] STT upgrade to whisper.cpp / mlx-whisper (Metal) for lower latency
+- [x] Local voice loop + Spotify search/play
+- [x] Multi-agent handoff mesh (router + Chat/Music/Calendar/Files)
+- [x] Wake word ("Hey Jarvis") via openWakeWord
+- [x] mlx-whisper (Metal) fast local STT backend
+- [x] Cloud mode (Deepgram + Cerebras/OpenAI + Cartesia)
+- [ ] More apps (mail, messages, system control)
+- [ ] Persistent long-term memory (RAG)
