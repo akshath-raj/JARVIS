@@ -106,12 +106,19 @@ class JarvisAgent(BaseJarvisAgent):
 
     @function_tool()
     async def set_loop(self, context: RunContext[JarvisContext], enabled: bool) -> str:
-        """Turn repeat/loop on or off."""
+        """Loop the CURRENTLY playing song on repeat (enabled=true) or stop looping.
+
+        Use when the user says things like "loop this", "play this on repeat", or
+        "put the current song on loop".
+        """
         try:
-            await asyncio.to_thread(context.userdata.spotify.set_repeat, enabled)
+            if enabled:
+                label = await asyncio.to_thread(context.userdata.spotify.loop_current)
+                return f"looping {label}"
+            await asyncio.to_thread(context.userdata.spotify.set_repeat, False)
+            return "looping off"
         except SpotifyError as e:
             return f"error: {e}"
-        return "looping on" if enabled else "looping off"
 
     @function_tool()
     async def pause_music(self, context: RunContext[JarvisContext]) -> str:

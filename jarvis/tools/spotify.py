@@ -79,22 +79,54 @@ class SpotifyController:
         return proc.stdout.strip()
 
     def ensure_running(self) -> None:
-        """Launch Spotify in the BACKGROUND without stealing focus."""
-        # `open -g -j` = open in background (-g) and hidden (-j); never foregrounds.
-        subprocess.run(["open", "-g", "-j", "-a", "Spotify"], timeout=10)
-        # Wait until the app is scriptable (freshly launched apps aren't instant).
+        """Start Spotify WITHOUT stealing focus.
+
+        AppleScript `launch` starts the app in the background and does NOT bring it
+        to the foreground (unlike `activate` or `open -a`, which steal focus). If
+        it's already running, this is a no-op.
+        """
+        try:
+            running = self._osa('application "Spotify" is running') == "true"
+        except SpotifyError:
+            running = False
+        if running:
+            return
+        self._osa('launch application "Spotify"')
         for _ in range(20):
             try:
-                if self._osa('tell application "Spotify" to return running') == "true":
+                if self._osa('application "Spotify" is running') == "true":
                     return
             except SpotifyError:
                 pass
             time.sleep(0.25)
 
+    def _frontmost_app(self) -> str:
+        try:
+            return self._osa(
+                'tell application "System Events" to return name of first '
+                "application process whose frontmost is true"
+            )
+        except SpotifyError:
+            return ""
+
+    def _restore_focus(self, prev: str) -> None:
+        """Bring the previously-focused app back to the front (Spotify activates
+        itself when told to play, which would otherwise steal focus)."""
+        if prev and prev != "Spotify":
+            try:
+                self._osa(f'tell application "{prev}" to activate')
+            except SpotifyError:
+                pass
+
     def _play_context(self, uri: str) -> None:
         if not _URI_RE.match(uri):
             raise SpotifyError(f"Refusing to play malformed URI: {uri!r}")
+        prev = self._frontmost_app()
         self._osa(f'tell application "Spotify" to play track "{uri}"')
+        # Spotify activates itself asynchronously after 'play track' returns, so
+        # wait for it to come forward, then hand focus back to the user's app.
+        time.sleep(0.4)
+        self._restore_focus(prev)
 
     def play_uri(self, uri: str) -> None:
         self._play_context(uri)
@@ -117,6 +149,20 @@ class SpotifyController:
 
     def set_repeat(self, enabled: bool) -> None:
         self._osa(f'tell application "Spotify" to set repeating to {str(enabled).lower()}')
+
+    def loop_current(self) -> str:
+        """Put the CURRENTLY playing song on repeat (isolate it, then repeat).
+
+        Spotify's AppleScript only exposes a boolean `repeating` (repeat the
+        current context), so to loop just this one song we replay it on its own so
+        the context is a single track, then enable repeat.
+        """
+        label = self.current_track()
+        uri = self.current_track_uri()
+        self._play_context(uri)
+        time.sleep(0.6)  # let the new context settle before enabling repeat
+        self.set_repeat(True)
+        return label
 
     def set_shuffle(self, enabled: bool) -> None:
         self._osa(f'tell application "Spotify" to set shuffling to {str(enabled).lower()}')
@@ -278,8 +324,10 @@ class SpotifyController:
         )
         if r.status_code == 403:
             raise SpotifyError(
-                "Spotify denied the playlist edit (403). Re-authorize with playlist "
-                "permissions: run `python -m jarvis.spotify_auth` again."
+                "Spotify denied the playlist edit (403). Your token has the right "
+                "scopes, so this is an app restriction: in the Spotify developer "
+                "dashboard, open your app's User Management and add your Spotify "
+                "account to the allowlist (required in Development Mode)."
             )
         if r.status_code not in (200, 201):
             raise SpotifyError(f"Add to playlist failed ({r.status_code}): {r.text}")
@@ -315,6 +363,7 @@ class SpotifyController:
         self.ensure_running()
         self.play_uri(track.uri)
         if loop:
+            time.sleep(0.6)  # let playback start before enabling repeat
             self.set_repeat(True)
         return PlayResult(label=track.label, source="web")
 
@@ -326,7 +375,9 @@ class SpotifyController:
         uri, pl_name = found
         self.ensure_running()
         self._play_context(uri)
-        self.set_repeat(loop)
+        if loop:
+            time.sleep(0.6)
+            self.set_repeat(True)
         return pl_name
 
     def _try_play_via_app(self, query: str) -> bool:

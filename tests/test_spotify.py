@@ -109,15 +109,18 @@ def test_volume_clamped(monkeypatch):
 def test_play_uri_rejects_injection(monkeypatch):
     """The one templated AppleScript value must reject anything but a clean URI."""
     sc = SpotifyController()
-    ran = []
-    monkeypatch.setattr(sc, "_osa", lambda s: ran.append(s))
+    scripts = []
+    monkeypatch.setattr(sc, "_osa", lambda s: scripts.append(s) or "")
+    monkeypatch.setattr("jarvis.tools.spotify.time.sleep", lambda *_: None)
     sc.play_uri("spotify:track:2JiDi0qAXsPwhPqA2qaKGt")     # valid track
     sc.play_uri("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M")  # valid playlist context
-    assert len(ran) == 2
+    plays = [s for s in scripts if "play track" in s]
+    assert len(plays) == 2
     for bad in ['spotify:track:x" \n do shell script "rm -rf ~"', "spotify:episode:x", "; ls", "not a uri"]:
         with pytest.raises(SpotifyError):
             sc.play_uri(bad)
-    assert len(ran) == 2  # no extra AppleScript executed for bad inputs
+    # no extra 'play track' AppleScript executed for malformed inputs
+    assert len([s for s in scripts if "play track" in s]) == 2
 
 
 def test_play_query_loop_sets_repeat(monkeypatch):
