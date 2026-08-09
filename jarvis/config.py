@@ -25,6 +25,9 @@ def _truthy(val: str) -> bool:
 class Config:
     # ── Mode ───────────────────────────────────────────────────────────
     cloud: bool = _truthy(os.getenv("JARVIS_MODE", "0"))
+    # In cloud mode, run local device-action agents (music/calendar/files) on the
+    # LOCAL LLM for reliable, private tool execution. Answering stays cloud.
+    hybrid_local_actions: bool = _truthy(os.getenv("JARVIS_HYBRID_LOCAL_ACTIONS", "1"))
 
     # ── Local pipeline ─────────────────────────────────────────────────
     ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen3:8b")

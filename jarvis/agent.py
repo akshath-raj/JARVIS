@@ -49,6 +49,7 @@ async def entrypoint(ctx: JobContext) -> None:
             active_seconds=config.wake_active_seconds,
         ),
         search_mode=config.spotify_search_mode,
+        local_llm=pipeline.local_action_llm(),
     )
 
     session = AgentSession[JarvisContext](

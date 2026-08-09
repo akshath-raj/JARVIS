@@ -45,21 +45,30 @@ class RouterAgent(BaseJarvisAgent):
         """Route to the music specialist for playing or controlling Spotify."""
         from jarvis.agents.music import MusicAgent
 
-        return MusicAgent(chat_ctx=self.chat_ctx.copy(exclude_instructions=True))
+        return MusicAgent(
+            chat_ctx=self.chat_ctx.copy(exclude_instructions=True),
+            llm=context.userdata.local_llm,
+        )
 
     @function_tool()
     async def transfer_to_calendar(self, context: RunContext[JarvisContext]):
         """Route to the calendar specialist for events, meetings, and scheduling."""
         from jarvis.agents.calendar import CalendarAgent
 
-        return CalendarAgent(chat_ctx=self.chat_ctx.copy(exclude_instructions=True))
+        return CalendarAgent(
+            chat_ctx=self.chat_ctx.copy(exclude_instructions=True),
+            llm=context.userdata.local_llm,
+        )
 
     @function_tool()
     async def transfer_to_files(self, context: RunContext[JarvisContext]):
         """Route to the files specialist for finding, listing, or opening files."""
         from jarvis.agents.files import FileAgent
 
-        return FileAgent(chat_ctx=self.chat_ctx.copy(exclude_instructions=True))
+        return FileAgent(
+            chat_ctx=self.chat_ctx.copy(exclude_instructions=True),
+            llm=context.userdata.local_llm,
+        )
 
     @function_tool()
     async def transfer_to_chat(self, context: RunContext[JarvisContext]):

@@ -17,6 +17,11 @@ LOCAL keeps everything on-device — nothing the mic captures leaves the machine
 mirrors the reference "live JARVIS" stack; the LLM prefers Cerebras and falls
 back to OpenAI based on which API key is set.
 
+**Hybrid (default in cloud mode):** device-action agents (music, calendar, files)
+run their tool-calling on the **local** LLM for reliable, private on-device
+actions, while STT/TTS and general answering use the cloud. Requires Ollama
+running; disable with `JARVIS_HYBRID_LOCAL_ACTIONS=0`.
+
 ## Architecture
 
 Voice pipeline (all local):

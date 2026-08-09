@@ -9,8 +9,9 @@ from jarvis.tools import system
 
 
 class FileAgent(BaseJarvisAgent):
-    def __init__(self, chat_ctx: ChatContext | None = None) -> None:
+    def __init__(self, chat_ctx: ChatContext | None = None, llm=None) -> None:
         super().__init__(
+            llm=llm,
             instructions=(
                 "You are the files specialist. Use your tools to find and open files "
                 "on this Mac. When you find files, read out just the file names, not "

@@ -70,10 +70,28 @@ def build_llm() -> _llm.LLM:
             "OPENAI_API_KEY."
         )
 
+    return build_local_llm()
+
+
+def build_local_llm() -> _llm.LLM:
+    """The local Ollama LLM (used as the session LLM in local mode, and for
+    device-action agents in the hybrid)."""
     logger.info("LLM: Ollama %s (local)", config.ollama_model)
     return openai.LLM.with_ollama(
         model=config.ollama_model, base_url=config.ollama_base_url
     )
+
+
+def local_action_llm() -> _llm.LLM | None:
+    """LLM override for agents that perform local device actions.
+
+    In CLOUD mode with the hybrid enabled, these agents run on the local model so
+    tool-calling for on-device actions (Spotify, calendar, files) is reliable and
+    private. Returns None otherwise (the session LLM — already local — is used).
+    """
+    if config.cloud and config.hybrid_local_actions:
+        return build_local_llm()
+    return None
 
 
 # ── TTS ────────────────────────────────────────────────────────────────

@@ -13,8 +13,9 @@ from jarvis.tools.spotify import SpotifyError
 
 
 class MusicAgent(BaseJarvisAgent):
-    def __init__(self, chat_ctx: ChatContext | None = None) -> None:
+    def __init__(self, chat_ctx: ChatContext | None = None, llm=None) -> None:
         super().__init__(
+            llm=llm,
             instructions=(
                 "You are the music specialist. Use your tools to control Spotify "
                 "rather than describing what you would do. After an action, confirm "

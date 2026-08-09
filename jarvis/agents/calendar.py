@@ -9,8 +9,9 @@ from jarvis.tools import system
 
 
 class CalendarAgent(BaseJarvisAgent):
-    def __init__(self, chat_ctx: ChatContext | None = None) -> None:
+    def __init__(self, chat_ctx: ChatContext | None = None, llm=None) -> None:
         super().__init__(
+            llm=llm,
             instructions=(
                 "You are the calendar specialist. Use your tools to read the user's "
                 "schedule and answer succinctly. If the user switches to a non-"

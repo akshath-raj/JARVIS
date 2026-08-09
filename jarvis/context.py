@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
+
+from livekit.agents.llm import LLM
 
 from jarvis.tools.spotify import SpotifyController
 from jarvis.wake import WakeGate
@@ -20,3 +23,6 @@ class JarvisContext:
     wake: WakeGate
     search_mode: str = "auto"
     greeted: bool = False  # so the coordinator greets only on first entry
+    # In the hybrid, device-action agents run on this local LLM (None = use the
+    # session LLM, which is already local in local mode).
+    local_llm: Optional[LLM] = None
