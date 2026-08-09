@@ -77,17 +77,22 @@ driven by AppleScript, and every call runs in a worker thread, so it never steal
 focus or keystrokes from what you're doing.
 
 - Search & play a song — *"play Bohemian Rhapsody by Queen"*
-- Loop / repeat — *"play Weightless on repeat"* (or *"loop this"*)
-- Play one of your playlists — *"play my Focus playlist"*
-- Add the current song to a playlist — *"add this to my Favourites"*
+- Loop / repeat the current song — *"loop this"* / *"play Weightless on repeat"*
 - Pause / resume / skip / volume / what's playing
+- Playlists — *"what playlists do I have"*, *"play my Focus playlist"*, *"add this to my Favourites"*
+- **Your library** — *"play my most played song"*, *"what are my top songs"*,
+  *"list my liked songs"*, *"play one of my favourites"*, *"who are my top
+  artists"*, *"what did I listen to recently"*
 
-Song search needs the client-credentials key. **Playlist features** (play/add to
-*your* playlists) need a one-time user login:
+Song search needs the client-credentials key. **Playlist & library features**
+(your playlists, top tracks, liked songs, recently played) need a one-time user
+login — re-run this whenever new scopes are added:
 ```bash
 # add http://127.0.0.1:8080/callback to your app's Redirect URIs, then:
 python -m jarvis.spotify_auth
 ```
+Scopes requested: playlist read/modify, `user-top-read`, `user-library-read`,
+`user-read-recently-played`.
 
 ### Sandboxing
 The only capability that touches your machine is **Spotify** (play / playlists /

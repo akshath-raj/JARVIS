@@ -33,7 +33,10 @@ _SEARCH_URL = "https://api.spotify.com/v1/search"
 _API = "https://api.spotify.com/v1"
 
 TOKENS_PATH = Path.home() / ".jarvis" / "spotify_tokens.json"
-OAUTH_SCOPES = "playlist-read-private playlist-modify-private playlist-modify-public"
+OAUTH_SCOPES = (
+    "playlist-read-private playlist-modify-private playlist-modify-public "
+    "user-top-read user-library-read user-read-recently-played"
+)
 
 
 @dataclass
@@ -254,6 +257,51 @@ class SpotifyController:
         r = requests.get(f"{_API}/me", headers={"Authorization": f"Bearer {token}"}, timeout=10)
         r.raise_for_status()
         return r.json()["id"]
+
+    def _user_get(self, path: str) -> dict:
+        r = requests.get(
+            f"{_API}{path}",
+            headers={"Authorization": f"Bearer {self._user_token()}"},
+            timeout=10,
+        )
+        if r.status_code == 403 and "scope" in r.text.lower():
+            raise SpotifyError(
+                "Spotify needs extra permissions for this. Re-run "
+                "`python -m jarvis.spotify_auth` to grant them."
+            )
+        if r.status_code != 200:
+            raise SpotifyError(f"Request failed ({r.status_code}): {r.text[:80]}")
+        return r.json()
+
+    @staticmethod
+    def _to_track(t: dict) -> Track:
+        return Track(t["uri"], t["name"], ", ".join(a["name"] for a in t.get("artists", [])))
+
+    # ── Library / listening history ───────────────────────────────────────
+    def top_tracks(self, limit: int = 10, time_range: str = "medium_term") -> list[Track]:
+        """Most-played tracks. time_range: short_term (~4wk), medium_term (~6mo),
+        long_term (years)."""
+        data = self._user_get(f"/me/top/tracks?limit={limit}&time_range={time_range}")
+        return [self._to_track(t) for t in data.get("items", [])]
+
+    def top_artists(self, limit: int = 10, time_range: str = "medium_term") -> list[str]:
+        data = self._user_get(f"/me/top/artists?limit={limit}&time_range={time_range}")
+        return [a["name"] for a in data.get("items", [])]
+
+    def liked_songs(self, limit: int = 20) -> list[Track]:
+        """The user's saved/liked songs (most recently added first)."""
+        data = self._user_get(f"/me/tracks?limit={limit}")
+        return [self._to_track(it["track"]) for it in data.get("items", []) if it.get("track")]
+
+    def recently_played(self, limit: int = 10) -> list[Track]:
+        data = self._user_get(f"/me/player/recently-played?limit={limit}")
+        return [self._to_track(it["track"]) for it in data.get("items", []) if it.get("track")]
+
+    def play_track(self, track: Track) -> str:
+        """Play a specific resolved track in the background."""
+        self.ensure_running()
+        self.play_uri(track.uri)
+        return track.label
 
     def list_playlists(self) -> list[tuple[str, int | None]]:
         """Return the user's playlists as (name, track_count). track_count is None

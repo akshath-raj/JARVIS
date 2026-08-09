@@ -10,6 +10,7 @@ blocks the voice loop or steals focus.
 from __future__ import annotations
 
 import asyncio
+import random
 
 from livekit.agents import ChatContext, RunContext, function_tool
 
@@ -163,3 +164,70 @@ class JarvisAgent(BaseJarvisAgent):
             return await asyncio.to_thread(context.userdata.spotify.current_track)
         except SpotifyError as e:
             return f"error: {e}"
+
+    # ---- Library: favorites, most-played, history -----------------------
+    @function_tool()
+    async def list_top_tracks(self, context: RunContext[JarvisContext]) -> str:
+        """List the user's most-played (top) songs."""
+        try:
+            tracks = await asyncio.to_thread(context.userdata.spotify.top_tracks, 10)
+        except SpotifyError as e:
+            return f"error: {e}"
+        if not tracks:
+            return "no top tracks yet"
+        return "your top tracks: " + ", ".join(t.label for t in tracks)
+
+    @function_tool()
+    async def play_most_played(self, context: RunContext[JarvisContext]) -> str:
+        """Play the user's single most-played song."""
+        try:
+            tracks = await asyncio.to_thread(context.userdata.spotify.top_tracks, 5)
+            if not tracks:
+                return "no top tracks yet"
+            label = await asyncio.to_thread(context.userdata.spotify.play_track, tracks[0])
+        except SpotifyError as e:
+            return f"error: {e}"
+        return f"now playing your most played, {label}"
+
+    @function_tool()
+    async def list_liked_songs(self, context: RunContext[JarvisContext]) -> str:
+        """List the user's liked/favorite songs."""
+        try:
+            tracks = await asyncio.to_thread(context.userdata.spotify.liked_songs, 15)
+        except SpotifyError as e:
+            return f"error: {e}"
+        if not tracks:
+            return "no liked songs yet"
+        return f"{len(tracks)} liked songs: " + ", ".join(t.label for t in tracks)
+
+    @function_tool()
+    async def play_favorite_song(self, context: RunContext[JarvisContext]) -> str:
+        """Play one of the user's liked/favorite songs."""
+        try:
+            tracks = await asyncio.to_thread(context.userdata.spotify.liked_songs, 50)
+            if not tracks:
+                return "no liked songs yet"
+            label = await asyncio.to_thread(context.userdata.spotify.play_track, random.choice(tracks))
+        except SpotifyError as e:
+            return f"error: {e}"
+        return f"now playing one of your favourites, {label}"
+
+    @function_tool()
+    async def list_top_artists(self, context: RunContext[JarvisContext]) -> str:
+        """List the user's most-listened-to (top) artists."""
+        try:
+            artists = await asyncio.to_thread(context.userdata.spotify.top_artists, 10)
+        except SpotifyError as e:
+            return f"error: {e}"
+        return "your top artists: " + ", ".join(artists) if artists else "no top artists yet"
+
+    @function_tool()
+    async def recently_played(self, context: RunContext[JarvisContext]) -> str:
+        """List songs the user played recently."""
+        try:
+            tracks = await asyncio.to_thread(context.userdata.spotify.recently_played, 10)
+        except SpotifyError as e:
+            return f"error: {e}"
+        if not tracks:
+            return "nothing played recently"
+        return "recently played: " + ", ".join(t.label for t in tracks)

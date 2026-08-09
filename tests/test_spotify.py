@@ -182,6 +182,35 @@ def test_list_playlists_handles_null_counts(monkeypatch):
     assert out == [("Focus", 12), ("Workout", None)]
 
 
+def test_top_tracks_and_liked_parse(monkeypatch):
+    sc = SpotifyController("id", "secret")
+
+    def fake_user_get(path):
+        if "/me/top/tracks" in path:
+            return {"items": [{"uri": "spotify:track:a", "name": "Song A", "artists": [{"name": "X"}]}]}
+        if "/me/tracks" in path:
+            return {"items": [{"track": {"uri": "spotify:track:b", "name": "Song B", "artists": [{"name": "Y"}]}}]}
+        if "/me/top/artists" in path:
+            return {"items": [{"name": "Artist Z"}]}
+        return {"items": []}
+
+    monkeypatch.setattr(sc, "_user_get", fake_user_get)
+    assert sc.top_tracks()[0] == Track("spotify:track:a", "Song A", "X")
+    assert sc.liked_songs()[0] == Track("spotify:track:b", "Song B", "Y")
+    assert sc.top_artists() == ["Artist Z"]
+
+
+def test_user_get_scope_error(monkeypatch):
+    sc = SpotifyController("id", "secret")
+    monkeypatch.setattr(sc, "_user_token", lambda: "t")
+    m = mock.Mock()
+    m.status_code = 403
+    m.text = '{"error":{"status":403,"message":"Insufficient client scope"}}'
+    monkeypatch.setattr("jarvis.tools.spotify.requests.get", lambda *a, **k: m)
+    with pytest.raises(SpotifyError, match="spotify_auth"):
+        sc.top_tracks()
+
+
 def test_playlist_features_need_login(monkeypatch, tmp_path):
     monkeypatch.setattr("jarvis.tools.spotify.TOKENS_PATH", tmp_path / "nope.json")
     sc = SpotifyController("id", "secret")
