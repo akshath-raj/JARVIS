@@ -42,6 +42,18 @@ background chatter/noise (fails open, so it never goes unexpectedly mute). Set
 `JARVIS_WAKE=1` to use the "Hey Jarvis" wake word instead, or `JARVIS_RELEVANCE=0`
 to reply to everything.
 
+### Performance / quantization
+All local LLMs run **Q4_K_M** (4-bit quantized) weights via Ollama. For faster
+inference, enable Flash Attention and a **quantized KV cache** on the Ollama
+server (big win on Apple Silicon, less memory per token):
+```bash
+launchctl setenv OLLAMA_FLASH_ATTENTION 1
+launchctl setenv OLLAMA_KV_CACHE_TYPE q8_0   # or q4_0 for even less memory
+brew services restart ollama
+```
+STT uses `fp16` mlx-whisper on Metal. Want lighter still? Point a model env at a
+lower-bit tag, e.g. `JARVIS_RELEVANCE_MODEL=qwen3:1.7b-q4_0`.
+
 ### Per-task models (smaller = faster)
 Each job uses a right-sized local model, independently swappable:
 
