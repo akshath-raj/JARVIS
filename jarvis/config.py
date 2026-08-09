@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Always load the project's own .env (parent of this package), regardless of the
+# current working directory, so keys resolve the same way from anywhere.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def _truthy(val: str) -> bool:
@@ -41,14 +44,10 @@ class Config:
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
+    # Deepgram handles both STT (nova-3) and TTS (Aura-2) in cloud mode.
     deepgram_api_key: str = os.getenv("DEEPGRAM_API_KEY", "")
     deepgram_model: str = os.getenv("DEEPGRAM_MODEL", "nova-3")
-
-    cartesia_api_key: str = os.getenv("CARTESIA_API_KEY", "")
-    cartesia_model: str = os.getenv("CARTESIA_MODEL", "sonic-3")
-    cartesia_voice: str = os.getenv(
-        "CARTESIA_VOICE", "9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"
-    )
+    deepgram_tts_model: str = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-draco-en")
 
     # ── Turn detection ─────────────────────────────────────────────────
     # Use the LiveKit MultilingualModel turn detector (better than VAD-only).

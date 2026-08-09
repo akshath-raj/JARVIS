@@ -1,7 +1,7 @@
 # --- Orchestration + plugins (local console mode uses your mic/speaker) ---
 # Extras: openai (Ollama-compat + OpenAI cloud), silero (VAD),
-# turn-detector (endpointing), deepgram/cartesia/cerebras (cloud pipeline).
-livekit-agents[openai,silero,turn-detector,deepgram,cartesia,cerebras]~=1.6
+# turn-detector (endpointing), deepgram (cloud STT+TTS), cerebras (cloud LLM).
+livekit-agents[openai,silero,turn-detector,deepgram,cerebras]~=1.6
 
 # --- Local STT ---
 mlx-whisper>=0.4.2 ; sys_platform == "darwin" and platform_machine == "arm64"

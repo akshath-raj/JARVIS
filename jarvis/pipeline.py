@@ -32,6 +32,7 @@ def build_stt() -> _stt.STT:
         from livekit.plugins import deepgram
 
         return deepgram.STT(
+            api_key=config.deepgram_api_key,
             model=config.deepgram_model,
             language="en",
             keyterm=["Jarvis", "Hey Jarvis"],
@@ -72,14 +73,13 @@ def build_llm() -> _llm.LLM:
 # ── TTS ────────────────────────────────────────────────────────────────
 def build_tts() -> _tts.TTS:
     if config.cloud:
-        if not config.cartesia_api_key:
-            raise ConfigError("CLOUD mode needs CARTESIA_API_KEY for text-to-speech.")
-        from livekit.plugins import cartesia
+        if not config.deepgram_api_key:
+            raise ConfigError("CLOUD mode needs DEEPGRAM_API_KEY for text-to-speech.")
+        from livekit.plugins import deepgram
 
-        return cartesia.TTS(
-            api_key=config.cartesia_api_key,
-            model=config.cartesia_model,
-            voice=config.cartesia_voice,
+        return deepgram.TTS(
+            api_key=config.deepgram_api_key,
+            model=config.deepgram_tts_model,
         )
 
     from jarvis.plugins.kokoro_tts import KokoroTTS
@@ -109,5 +109,5 @@ def describe() -> str:
         which_llm = "Cerebras" if config.cerebras_api_key else (
             "OpenAI" if config.openai_api_key else "NONE"
         )
-        return f"CLOUD (Deepgram + {which_llm} + Cartesia)"
+        return f"CLOUD (Deepgram STT+TTS + {which_llm})"
     return f"LOCAL (Whisper[{config.whisper_backend}] + Ollama + Kokoro)"

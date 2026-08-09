@@ -10,7 +10,7 @@ It runs **fully local by default**, or can switch to a cloud pipeline.
 |---|---|---|
 | STT | Whisper (`mlx`/`faster`) | Deepgram `nova-3` |
 | LLM | Ollama `qwen3:8b` | Cerebras `gpt-oss-120b` → OpenAI |
-| TTS | Kokoro-82M | Cartesia `sonic-3` |
+| TTS | Kokoro-82M | Deepgram Aura-2 (`aura-2-draco-en`) |
 
 LOCAL keeps everything on-device — nothing the mic captures leaves the machine
 (the only egress is the optional Spotify catalog search, a song title). CLOUD
@@ -98,6 +98,6 @@ Set `JARVIS_WAKE=0` for always-listening, or `JARVIS_MODE=1` (with cloud keys in
 - [x] Multi-agent handoff mesh (router + Chat/Music/Calendar/Files)
 - [x] Wake word ("Hey Jarvis") via openWakeWord
 - [x] mlx-whisper (Metal) fast local STT backend
-- [x] Cloud mode (Deepgram + Cerebras/OpenAI + Cartesia)
+- [x] Cloud mode (Deepgram STT+TTS + Cerebras/OpenAI)
 - [ ] More apps (mail, messages, system control)
 - [ ] Persistent long-term memory (RAG)
