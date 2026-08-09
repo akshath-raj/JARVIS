@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Secrets
+.env
+
+# Local models / weights (downloaded, not committed)
+models/*.onnx
+models/*.bin
+*.gguf
+
+# OS
+.DS_Store

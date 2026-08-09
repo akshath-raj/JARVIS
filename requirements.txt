@@ -1,0 +1,14 @@
+# --- Orchestration (fully local; console mode uses your mic/speaker, no LiveKit cloud) ---
+livekit-agents[openai,silero]~=1.5
+
+# --- Local STT ---
+faster-whisper>=1.1.0
+
+# --- Local TTS ---
+kokoro-onnx>=0.4.9
+soundfile>=0.12.1
+
+# --- Spotify search + misc ---
+requests>=2.32.0
+numpy>=1.26
+python-dotenv>=1.0.1
