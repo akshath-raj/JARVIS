@@ -11,9 +11,6 @@ faster-whisper>=1.1.0
 kokoro-onnx>=0.4.9
 soundfile>=0.12.1
 
-# --- Wake word ---
-openwakeword>=0.6.0
-
 # --- Spotify search + misc ---
 requests>=2.32.0
 numpy>=1.26

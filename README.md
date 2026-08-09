@@ -29,18 +29,22 @@ Voice pipeline (all local):
 mic ─► Silero VAD ─► Whisper STT ─► qwen3 (Ollama) ─► Kokoro TTS ─► speaker
 ```
 
-JARVIS listens continuously; a relevance gate (not a wake word) decides what to
-answer:
+Activation: **wake word with smart follow-up**.
 ```
-mic ─► VAD/turn-detect ─► STT ─► [relevance gate] ─► LLM ─► TTS ─► speaker
-                                  is this directed at JARVIS?
-                                  (tiny local model, context-aware) ─ no ─► stay silent
+mic ─► VAD/turn-detect ─► STT ─► [wake gate] ─► LLM ─► TTS ─► speaker
+                                  awake?  ── no ──► ignore
 ```
-No "Hey Jarvis" needed by default. A small fast model looks at the conversation
-history and the new utterance and decides if it's addressed to JARVIS vs.
-background chatter/noise (fails open, so it never goes unexpectedly mute). Set
-`JARVIS_WAKE=1` to use the "Hey Jarvis" wake word instead, or `JARVIS_RELEVANCE=0`
-to reply to everything.
+Say **"jarvis"** or **"hey jarvis"** to activate (the wake word is stripped, so
+"jarvis play some jazz" just plays jazz). The clever bit:
+
+- If JARVIS's reply is a **clarification question** ("Which playlist?"), it stays
+  awake — you answer directly, no wake word.
+- If JARVIS's reply is an **answer/statement**, it goes back to sleep — say the
+  wake word again for the next request.
+
+Transcript-based (so both "jarvis" and "hey jarvis" work). Configure with
+`JARVIS_WAKE_WORDS` (comma-separated), `JARVIS_WAKE_FOLLOWUP` (window seconds), or
+disable with `JARVIS_WAKE=0` to reply to everything.
 
 ### Performance / quantization
 All local LLMs run **Q4_K_M** (4-bit quantized) weights via Ollama. For faster
@@ -61,7 +65,6 @@ Each job uses a right-sized local model, independently swappable:
 |---|---|---|
 | Chat / routing / reasoning | `qwen3:8b` | `OLLAMA_MODEL` |
 | Device tool-calling (Spotify) | `qwen2.5:3b-instruct` | `JARVIS_TOOL_MODEL` |
-| Relevance gate | `qwen2.5:1.5b-instruct` | `JARVIS_RELEVANCE_MODEL` |
 
 **Why non-thinking models for tools/relevance:** Qwen3 is a *reasoning* model — it
 emits a long "thinking" trace before a tool call (seconds of latency), and a token

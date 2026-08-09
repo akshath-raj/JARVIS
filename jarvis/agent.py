@@ -23,10 +23,9 @@ from livekit.plugins import silero
 from jarvis import pipeline
 from jarvis.agents import RouterAgent
 from jarvis.config import config
+from jarvis.activation import WakeController
 from jarvis.context import JarvisContext
-from jarvis.relevance import RelevanceGate
 from jarvis.tools.spotify import SpotifyController
-from jarvis.wake import WakeGate
 
 logger = logging.getLogger("jarvis")
 
@@ -43,16 +42,10 @@ async def entrypoint(ctx: JobContext) -> None:
         spotify=SpotifyController(
             config.spotify_client_id, config.spotify_client_secret
         ),
-        wake=WakeGate(
+        activation=WakeController(
             enabled=config.wake_enabled,
-            model=config.wake_model,
-            threshold=config.wake_threshold,
-            active_seconds=config.wake_active_seconds,
-        ),
-        relevance=RelevanceGate(
-            enabled=config.relevance_enabled,
-            model=config.relevance_model,
-            base_url=config.ollama_base_url,
+            words=config.wake_words,
+            followup_seconds=config.wake_followup_seconds,
         ),
         search_mode=config.spotify_search_mode,
         local_llm=pipeline.local_action_llm(),
@@ -66,6 +59,13 @@ async def entrypoint(ctx: JobContext) -> None:
         turn_detection=pipeline.build_turn_detection(),
         vad=ctx.proc.userdata.get("vad") or silero.VAD.load(min_silence_duration=0.4),
     )
+
+    # After each JARVIS reply, stay awake iff it was a clarification question.
+    @session.on("conversation_item_added")
+    def _on_item(ev) -> None:
+        item = getattr(ev, "item", None)
+        if item is not None and getattr(item, "role", None) == "assistant":
+            userdata.activation.note_reply(item.text_content or "")
 
     # RouterAgent.on_enter delivers the greeting.
     await session.start(agent=RouterAgent(), room=ctx.room)

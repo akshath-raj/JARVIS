@@ -21,7 +21,10 @@ class RouterAgent(BaseJarvisAgent):
                 "- Music or Spotify (play a song, pause, skip, volume, what's "
                 "playing) -> transfer_to_music.\n"
                 "- General questions, facts, or chit-chat -> transfer_to_chat.\n"
-                "Do not describe the routing; just call the tool. " + VOICE_STYLE
+                "If the user only says your name or greets you (no request yet), "
+                "don't call a tool — just briefly ask how you can help, ending with "
+                "'?'. Otherwise do not describe the routing; just call the tool. "
+                + VOICE_STYLE
             ),
             chat_ctx=chat_ctx,
         )
@@ -30,8 +33,13 @@ class RouterAgent(BaseJarvisAgent):
         ud = self.session.userdata
         if not ud.greeted:
             ud.greeted = True
+            # A statement (not a question) so the session starts ASLEEP — the user
+            # must say the wake word to begin.
             await self.session.generate_reply(
-                instructions="Greet the user briefly as JARVIS and ask how you can help."
+                instructions=(
+                    "Introduce yourself in one short sentence as JARVIS, at the "
+                    "user's service. Do not ask a question."
+                )
             )
         else:
             # Returned from a specialist: route the user's latest request.

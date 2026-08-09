@@ -1,56 +1,39 @@
-"""Shared persona + behaviour for every JARVIS agent.
+"""Shared persona + activation behaviour for every JARVIS agent.
 
-`BaseJarvisAgent` wires the wake-word gate into the STT node so ALL agents (and
-every turn after a handoff) respect "Hey Jarvis" without duplicating logic.
+`BaseJarvisAgent` enforces wake-word activation with smart follow-up (see
+jarvis.activation) uniformly across all agents, including after a handoff.
 """
 from __future__ import annotations
 
 import logging
-from typing import AsyncIterable, Optional
 
-from livekit.agents import Agent, ModelSettings, StopResponse, llm, stt
+from livekit.agents import Agent, StopResponse, llm
 
 logger = logging.getLogger("jarvis.agent")
 
 # Appended to every agent's instructions. Keeps replies speakable and disables
-# qwen3's chain-of-thought for low latency (harmless for cloud models).
+# qwen3's chain-of-thought for low latency (harmless for non-thinking models).
 VOICE_STYLE = (
     "You are speaking out loud, so keep replies short and natural: a sentence or "
     "two, no markdown, no lists, no emoji. You are JARVIS, a witty, unflappable "
     "British AI butler. Address the user as \"sir\" occasionally, never in every "
-    "sentence. /no_think"
+    "sentence. When you need more information, ask a brief clarifying QUESTION "
+    "(end it with '?'). /no_think"
 )
 
 
 class BaseJarvisAgent(Agent):
-    """Base class that gates incoming audio on the shared wake word."""
-
-    async def stt_node(
-        self, audio: AsyncIterable, model_settings: ModelSettings
-    ) -> Optional[AsyncIterable[stt.SpeechEvent]]:
-        gate = getattr(self.session.userdata, "wake", None)
-
-        if gate is None or not gate.enabled:
-            async for ev in Agent.default.stt_node(self, audio, model_settings):
-                yield ev
-            return
-
-        async def gated():
-            async for frame in audio:
-                if gate.accept(frame):
-                    yield frame
-
-        async for ev in Agent.default.stt_node(self, gated(), model_settings):
-            yield ev
-
     async def on_user_turn_completed(
         self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage
     ) -> None:
-        """Relevance gate: stay silent if the utterance isn't directed at JARVIS."""
-        gate = getattr(self.session.userdata, "relevance", None)
-        if gate is None or not gate.enabled:
+        """Wake-word gate: answer only if woken or inside a follow-up window."""
+        ctl = getattr(self.session.userdata, "activation", None)
+        if ctl is None:
             return
-        text = (new_message.text_content or "").strip()
-        if not await gate.is_directed(turn_ctx, text):
-            logger.info("Ignoring undirected utterance: %r", text)
+        allowed, rewritten = ctl.gate(new_message.text_content or "")
+        if not allowed:
+            logger.info("Ignoring (not woken): %r", new_message.text_content)
             raise StopResponse()
+        if rewritten is not None:
+            # Strip the wake word so the agent sees just the request.
+            new_message.content = [rewritten]

@@ -60,17 +60,15 @@ class Config:
     # Use the LiveKit MultilingualModel turn detector (better than VAD-only).
     use_turn_detector: bool = _truthy(os.getenv("JARVIS_TURN_DETECTOR", "1"))
 
-    # ── Activation ─────────────────────────────────────────────────────
-    # Wake word is OFF by default: JARVIS listens continuously and a relevance
-    # gate decides whether each utterance is actually addressed to it.
-    wake_enabled: bool = _truthy(os.getenv("JARVIS_WAKE", "0"))
-    wake_model: str = os.getenv("JARVIS_WAKE_MODEL", "hey_jarvis")
-    wake_threshold: float = float(os.getenv("JARVIS_WAKE_THRESHOLD", "0.5"))
-    wake_active_seconds: float = float(os.getenv("JARVIS_WAKE_WINDOW", "12"))
-
-    # Context-aware relevance gate (directed-speech vs background noise).
-    relevance_enabled: bool = _truthy(os.getenv("JARVIS_RELEVANCE", "1"))
-    relevance_model: str = os.getenv("JARVIS_RELEVANCE_MODEL", "qwen2.5:1.5b-instruct")
+    # ── Activation (wake word + smart follow-up) ───────────────────────
+    # Say "jarvis" or "hey jarvis" to activate. After JARVIS asks a clarifying
+    # question, the next turn is answered WITHOUT the wake word for a short window;
+    # after a normal answer it goes back to sleep.
+    wake_enabled: bool = _truthy(os.getenv("JARVIS_WAKE", "1"))
+    wake_words: tuple[str, ...] = tuple(
+        w.strip() for w in os.getenv("JARVIS_WAKE_WORDS", "jarvis").split(",") if w.strip()
+    )
+    wake_followup_seconds: float = float(os.getenv("JARVIS_WAKE_FOLLOWUP", "20"))
 
     # ── Spotify ────────────────────────────────────────────────────────
     spotify_client_id: str = os.getenv("SPOTIFY_CLIENT_ID", "")
