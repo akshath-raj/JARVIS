@@ -1,9 +1,12 @@
 """MusicAgent — Spotify specialist. Owns all playback tools.
 
-Reads the shared SpotifyController from session.userdata (set up once at session
-start) rather than re-creating it on every handoff.
+All Spotify calls run in a background thread (asyncio.to_thread) so launching the
+app, searching, and starting playback never block the voice pipeline or steal
+focus from whatever the user is doing.
 """
 from __future__ import annotations
+
+import asyncio
 
 from livekit.agents import ChatContext, RunContext, function_tool
 
@@ -17,12 +20,13 @@ class MusicAgent(BaseJarvisAgent):
         super().__init__(
             llm=llm,
             instructions=(
-                "You are the music specialist. Use your tools to control Spotify "
-                "rather than describing what you would do. After an action, confirm "
-                "briefly (e.g. \"Now playing Bohemian Rhapsody by Queen\"). If a tool "
-                "returns an error, apologise briefly and say what went wrong. If the "
-                "user switches to a non-music topic, call back_to_coordinator. "
-                + VOICE_STYLE
+                "You are the music specialist controlling Spotify in the background. "
+                "Use your tools rather than describing what you would do. After an "
+                "action, confirm in one short sentence (e.g. \"Now playing Bohemian "
+                "Rhapsody by Queen\"). Set loop=true when the user asks to repeat or "
+                "loop a song. If a tool returns an error, apologise briefly and say "
+                "what went wrong. If the user switches to a non-music topic, call "
+                "back_to_coordinator. " + VOICE_STYLE
             ),
             chat_ctx=chat_ctx,
         )
@@ -30,26 +34,73 @@ class MusicAgent(BaseJarvisAgent):
     async def on_enter(self) -> None:
         await self.session.generate_reply()
 
-    # ---- Spotify tools ---------------------------------------------------
+    # ---- Playback --------------------------------------------------------
     @function_tool()
-    async def play_song(self, context: RunContext[JarvisContext], query: str) -> str:
-        """Search and immediately play the best matching song.
+    async def play_song(
+        self, context: RunContext[JarvisContext], query: str, loop: bool = False
+    ) -> str:
+        """Search for a song and play it. Set loop=true to repeat it.
 
         Args:
-            query: Natural-language song request, e.g. "Bohemian Rhapsody by Queen".
+            query: Song request, e.g. "Bohemian Rhapsody by Queen".
+            loop: If true, put the song on repeat.
         """
         ud = context.userdata
         try:
-            result = ud.spotify.play_query(query, mode=ud.search_mode)
+            result = await asyncio.to_thread(
+                ud.spotify.play_query, query, ud.search_mode, loop
+            )
         except SpotifyError as e:
             return f"error: {e}"
-        return f"now playing {result.label}"
+        return f"now playing {result.label}" + (" on repeat" if loop else "")
+
+    @function_tool()
+    async def play_playlist(
+        self, context: RunContext[JarvisContext], name: str, loop: bool = False
+    ) -> str:
+        """Play one of the user's own playlists by name. Set loop=true to repeat it.
+
+        Args:
+            name: The playlist name, e.g. "Focus" or "Workout".
+            loop: If true, loop the playlist.
+        """
+        try:
+            pl = await asyncio.to_thread(context.userdata.spotify.play_playlist, name, loop)
+        except SpotifyError as e:
+            return f"error: {e}"
+        return f"playing your {pl} playlist"
+
+    @function_tool()
+    async def add_current_song_to_playlist(
+        self, context: RunContext[JarvisContext], playlist: str
+    ) -> str:
+        """Add the currently playing song to one of the user's playlists.
+
+        Args:
+            playlist: Target playlist name, e.g. "Favourites".
+        """
+        try:
+            track, pl = await asyncio.to_thread(
+                context.userdata.spotify.add_current_to_playlist, playlist
+            )
+        except SpotifyError as e:
+            return f"error: {e}"
+        return f"added {track} to {pl}"
+
+    @function_tool()
+    async def set_loop(self, context: RunContext[JarvisContext], enabled: bool) -> str:
+        """Turn repeat/loop on or off for the current playback."""
+        try:
+            await asyncio.to_thread(context.userdata.spotify.set_repeat, enabled)
+        except SpotifyError as e:
+            return f"error: {e}"
+        return "looping on" if enabled else "looping off"
 
     @function_tool()
     async def pause_music(self, context: RunContext[JarvisContext]) -> str:
         """Pause Spotify playback."""
         try:
-            context.userdata.spotify.pause()
+            await asyncio.to_thread(context.userdata.spotify.pause)
         except SpotifyError as e:
             return f"error: {e}"
         return "paused"
@@ -58,7 +109,7 @@ class MusicAgent(BaseJarvisAgent):
     async def resume_music(self, context: RunContext[JarvisContext]) -> str:
         """Resume Spotify playback."""
         try:
-            context.userdata.spotify.resume()
+            await asyncio.to_thread(context.userdata.spotify.resume)
         except SpotifyError as e:
             return f"error: {e}"
         return "resumed"
@@ -67,7 +118,7 @@ class MusicAgent(BaseJarvisAgent):
     async def next_song(self, context: RunContext[JarvisContext]) -> str:
         """Skip to the next track."""
         try:
-            context.userdata.spotify.next_track()
+            await asyncio.to_thread(context.userdata.spotify.next_track)
         except SpotifyError as e:
             return f"error: {e}"
         return "skipped"
@@ -76,7 +127,7 @@ class MusicAgent(BaseJarvisAgent):
     async def set_music_volume(self, context: RunContext[JarvisContext], level: int) -> str:
         """Set Spotify volume (0-100)."""
         try:
-            context.userdata.spotify.set_volume(level)
+            await asyncio.to_thread(context.userdata.spotify.set_volume, level)
         except SpotifyError as e:
             return f"error: {e}"
         return f"volume set to {level}"
@@ -85,7 +136,7 @@ class MusicAgent(BaseJarvisAgent):
     async def whats_playing(self, context: RunContext[JarvisContext]) -> str:
         """Report the currently playing track."""
         try:
-            return context.userdata.spotify.current_track()
+            return await asyncio.to_thread(context.userdata.spotify.current_track)
         except SpotifyError as e:
             return f"error: {e}"
 

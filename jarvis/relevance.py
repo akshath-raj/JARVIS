@@ -15,10 +15,20 @@ import logging
 logger = logging.getLogger("jarvis.relevance")
 
 _SYSTEM = (
-    "You decide whether the LAST user utterance is addressed to a voice assistant "
-    "named JARVIS and expects a response, versus background speech, side "
-    "conversation, filler, or noise not directed at it. Use the conversation so far "
-    "for context (e.g. follow-ups to JARVIS's own questions ARE directed at it). "
+    "You are a filter for a voice assistant named JARVIS. Decide if the LAST user "
+    "utterance is a request/question/command DIRECTED AT JARVIS and expecting a "
+    "response, versus background speech, side conversation between people, "
+    "narration, filler, or noise. Use the conversation so far for context: a "
+    "follow-up right after JARVIS asked something IS directed at it.\n"
+    "Bias: commands and questions -> yes; declarative statements that are part of a "
+    "human-to-human conversation and don't address an assistant -> no.\n"
+    "Examples:\n"
+    "  'play some jazz' -> yes\n"
+    "  'what's the tallest mountain' -> yes\n"
+    "  'jarvis, pause' -> yes\n"
+    "  'yeah so the quarterly revenue was down again last week' -> no\n"
+    "  'haha did you see the game last night' -> no\n"
+    "  'um, so anyway' -> no\n"
     "Reply with exactly one word: yes or no."
 )
 

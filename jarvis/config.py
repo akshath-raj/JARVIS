@@ -32,8 +32,9 @@ class Config:
     # ── Local pipeline (per-task models; smaller = faster) ─────────────
     # Chat / router / general reasoning.
     ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen3:8b")
-    # Device-action agents (music/calendar/files) — tool-calling focused.
-    tool_model: str = os.getenv("JARVIS_TOOL_MODEL", "qwen3:4b")
+    # Device-action agents — a compact NON-THINKING model for snappy tool calls
+    # (thinking models like qwen3 burn seconds "reasoning" before every call).
+    tool_model: str = os.getenv("JARVIS_TOOL_MODEL", "qwen2.5:3b-instruct")
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 
     # STT backend: "mlx" (Metal, fastest on Apple Silicon) or "faster" (CPU).
@@ -69,12 +70,16 @@ class Config:
 
     # Context-aware relevance gate (directed-speech vs background noise).
     relevance_enabled: bool = _truthy(os.getenv("JARVIS_RELEVANCE", "1"))
-    relevance_model: str = os.getenv("JARVIS_RELEVANCE_MODEL", "qwen3:1.7b")
+    relevance_model: str = os.getenv("JARVIS_RELEVANCE_MODEL", "qwen2.5:1.5b-instruct")
 
     # ── Spotify ────────────────────────────────────────────────────────
     spotify_client_id: str = os.getenv("SPOTIFY_CLIENT_ID", "")
     spotify_client_secret: str = os.getenv("SPOTIFY_CLIENT_SECRET", "")
     spotify_search_mode: str = os.getenv("SPOTIFY_SEARCH_MODE", "auto")
+    # For playlist features (user OAuth). Add this exact URI to your Spotify app.
+    spotify_redirect_uri: str = os.getenv(
+        "SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8080/callback"
+    )
 
 
 config = Config()

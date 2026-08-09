@@ -107,16 +107,57 @@ def test_volume_clamped(monkeypatch):
 
 
 def test_play_uri_rejects_injection(monkeypatch):
-    """The one templated AppleScript value must reject anything but a track URI."""
+    """The one templated AppleScript value must reject anything but a clean URI."""
     sc = SpotifyController()
     ran = []
     monkeypatch.setattr(sc, "_osa", lambda s: ran.append(s))
-    sc.play_uri("spotify:track:2JiDi0qAXsPwhPqA2qaKGt")  # valid
-    assert len(ran) == 1
-    for bad in ['spotify:track:x" \n do shell script "rm -rf ~"', "spotify:playlist:x", "; ls"]:
+    sc.play_uri("spotify:track:2JiDi0qAXsPwhPqA2qaKGt")     # valid track
+    sc.play_uri("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M")  # valid playlist context
+    assert len(ran) == 2
+    for bad in ['spotify:track:x" \n do shell script "rm -rf ~"', "spotify:episode:x", "; ls", "not a uri"]:
         with pytest.raises(SpotifyError):
             sc.play_uri(bad)
-    assert len(ran) == 1  # no extra AppleScript executed for bad inputs
+    assert len(ran) == 2  # no extra AppleScript executed for bad inputs
+
+
+def test_play_query_loop_sets_repeat(monkeypatch):
+    sc = SpotifyController("id", "secret")
+    monkeypatch.setattr(sc, "search_track", lambda q: Track("spotify:track:abc", "X", "Y"))
+    monkeypatch.setattr(sc, "ensure_running", lambda: None)
+    monkeypatch.setattr(sc, "play_uri", lambda uri: None)
+    repeats = []
+    monkeypatch.setattr(sc, "set_repeat", lambda on: repeats.append(on))
+    sc.play_query("x", mode="web", loop=True)
+    assert repeats == [True]
+
+
+def test_add_current_to_playlist(monkeypatch):
+    sc = SpotifyController("id", "secret")
+    monkeypatch.setattr(sc, "current_track_uri", lambda: "spotify:track:abc")
+    monkeypatch.setattr(sc, "current_track", lambda: "X by Y")
+    monkeypatch.setattr(sc, "find_playlist", lambda name: ("spotify:playlist:pl123", "Favourites"))
+    monkeypatch.setattr(sc, "_user_token", lambda: "utok")
+    posted = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        posted["url"] = url
+        posted["uris"] = json["uris"]
+        m = mock.Mock()
+        m.status_code = 201
+        return m
+
+    monkeypatch.setattr("jarvis.tools.spotify.requests.post", fake_post)
+    track, pl = sc.add_current_to_playlist("favourites")
+    assert (track, pl) == ("X by Y", "Favourites")
+    assert posted["uris"] == ["spotify:track:abc"]
+    assert posted["url"].endswith("/playlists/pl123/tracks")
+
+
+def test_playlist_features_need_login(monkeypatch, tmp_path):
+    monkeypatch.setattr("jarvis.tools.spotify.TOKENS_PATH", tmp_path / "nope.json")
+    sc = SpotifyController("id", "secret")
+    with pytest.raises(SpotifyError, match="spotify_auth"):
+        sc._user_token()
 
 
 # ── Live (opt-in) ─────────────────────────────────────────────────────────

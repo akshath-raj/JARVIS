@@ -60,13 +60,20 @@ Each job uses a right-sized local model, independently swappable:
 | Task | Default | Env |
 |---|---|---|
 | Chat / routing / reasoning | `qwen3:8b` | `OLLAMA_MODEL` |
-| Device actions (music/calendar/files) | `qwen3:4b` | `JARVIS_TOOL_MODEL` |
-| Relevance gate | `qwen3:1.7b` | `JARVIS_RELEVANCE_MODEL` |
+| Device tool-calling (Spotify) | `qwen2.5:3b-instruct` | `JARVIS_TOOL_MODEL` |
+| Relevance gate | `qwen2.5:1.5b-instruct` | `JARVIS_RELEVANCE_MODEL` |
 
-All are Qwen3 (Apache-2.0, native tool-calling). For even stronger function-calling
-you can point `JARVIS_TOOL_MODEL` at a fine-tuned model, e.g. Katanemo
-`Arch-Function-3B`, MadeAgents `Hammer2.1-3b`, or Salesforce `xLAM-2-1b`
-(pull via `ollama pull hf.co/<repo>` — ensure the GGUF ships a tool template).
+**Why non-thinking models for tools/relevance:** Qwen3 is a *reasoning* model — it
+emits a long "thinking" trace before a tool call (seconds of latency), and a token
+cap just truncates it before the call. The compact **Qwen2.5-Instruct** models are
+non-thinking, so they emit tool calls immediately — far snappier for voice. For
+even stronger function-calling, point `JARVIS_TOOL_MODEL` at a fine-tuned model
+(Katanemo `Arch-Function-3B`, MadeAgents `Hammer2.1-3b`, Salesforce `xLAM-2-1b`;
+pull via `ollama pull hf.co/<repo>`).
+
+**Fallback:** if the compact tool model struggles with the richer toolset
+(playlists, loop, add-to-playlist), bump it up: `JARVIS_TOOL_MODEL=qwen3:8b`.
+Use the smaller model when it performs well; fall back to 8B only if it doesn't.
 
 Multi-agent hub-and-spoke (no single agent does everything — control is handed off):
 ```
@@ -86,13 +93,32 @@ The coordinator routes; each specialist owns its own tools and hands control
 `session.userdata`; handoffs pass conversation history via `chat_ctx` but reset
 each agent's own instructions.
 
+### Spotify capabilities
+Playback runs **in the background** — Spotify is launched hidden (`open -g -j`) and
+driven by AppleScript, and every call runs in a worker thread, so it never steals
+focus or keystrokes from what you're doing.
+
+- Search & play a song — *"play Bohemian Rhapsody by Queen"*
+- Loop / repeat — *"play Weightless on repeat"* (or *"loop this"*)
+- Play one of your playlists — *"play my Focus playlist"*
+- Add the current song to a playlist — *"add this to my Favourites"*
+- Pause / resume / skip / volume / what's playing
+
+Song search needs the client-credentials key. **Playlist features** (play/add to
+*your* playlists) need a one-time user login:
+```bash
+# add http://127.0.0.1:8080/callback to your app's Redirect URIs, then:
+python -m jarvis.spotify_auth
+```
+
 ### Sandboxing
-The only capability that touches your machine is **Spotify playback control**
-(play / pause / resume / next / volume / now-playing). There are **no file,
-shell, calendar, network-write, or delete/remove tools** exposed to any model.
-ChatAgent answers from the model's own knowledge only. The single value
-interpolated into AppleScript (a track URI) is regex-validated first, so it can't
-be used for injection.
+The only capability that touches your machine is **Spotify** (play / playlists /
+loop / add-to-playlist / pause / skip / volume / now-playing). There are **no
+file, shell, calendar, or delete/remove tools** exposed to any model — nothing
+can delete tracks or playlists (the Spotify surface has no destructive op).
+ChatAgent answers from the model's own knowledge only. Any URI interpolated into
+AppleScript is regex-validated (`spotify:{track,playlist,album,artist}:…`) first,
+so it can't be used for injection.
 
 ## Setup
 

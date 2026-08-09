@@ -1,35 +1,39 @@
-"""Spotify control for macOS.
+"""Spotify control for macOS — background & non-disruptive.
 
-Playback is always LOCAL (AppleScript against Spotify.app). The only tricky part
-is turning a spoken phrase into a specific track, because AppleScript can PLAY a
-track URI but cannot SEARCH the catalog. Two ways to bridge that gap:
+Design:
+  * Playback is driven by AppleScript against the local Spotify.app, launched in
+    the BACKGROUND (never brought to the foreground), so it doesn't interrupt what
+    the user is doing.
+  * Track/playlist SEARCH uses the Spotify Web API. Catalog search needs only the
+    Client-Credentials flow (no login). PLAYLIST read/modify (play a named
+    playlist, add the current song to a playlist) needs user OAuth — see
+    jarvis.spotify_auth for the one-time setup.
 
-  * "app"  -> drive the Spotify desktop UI: open ``spotify:search:<q>`` and try to
-              play the top result. No API key, fully local, but best-effort (depends
-              on Spotify's UI, which changes).
-  * "web"  -> Spotify Web API search (Client-Credentials, no user login). Sends only
-              a song title over the network; reliable and exact.
-
-Default mode is "auto": try the app first (per user preference), verify that audio
-actually started, and fall back to the Web API only if it didn't.
+Only a song title / playlist name ever leaves the machine.
 """
 from __future__ import annotations
 
 import base64
+import json
 import re
 import subprocess
 import time
 import urllib.parse
 from dataclasses import dataclass
+from pathlib import Path
 
 import requests
 
-# Spotify track URIs are always this shape; validating before interpolating into
-# AppleScript prevents any injection through the one templated value.
-_TRACK_URI_RE = re.compile(r"^spotify:track:[A-Za-z0-9]+$")
+# Accept track / playlist / album / artist context URIs; validated before any
+# interpolation into AppleScript (prevents injection via the one templated value).
+_URI_RE = re.compile(r"^spotify:(track|playlist|album|artist):[A-Za-z0-9]+$")
 
 _TOKEN_URL = "https://accounts.spotify.com/api/token"
 _SEARCH_URL = "https://api.spotify.com/v1/search"
+_API = "https://api.spotify.com/v1"
+
+TOKENS_PATH = Path.home() / ".jarvis" / "spotify_tokens.json"
+OAUTH_SCOPES = "playlist-read-private playlist-modify-private playlist-modify-public"
 
 
 @dataclass
@@ -45,8 +49,8 @@ class Track:
 
 @dataclass
 class PlayResult:
-    label: str      # "Bohemian Rhapsody by Queen"
-    source: str     # "app" or "web"
+    label: str
+    source: str  # "app" or "web"
 
 
 class SpotifyError(RuntimeError):
@@ -64,7 +68,7 @@ class SpotifyController:
     def has_web_api(self) -> bool:
         return bool(self._client_id and self._client_secret)
 
-    # ---- AppleScript helpers (local) -------------------------------------
+    # ── AppleScript (local, background) ───────────────────────────────────
     @staticmethod
     def _osa(script: str) -> str:
         proc = subprocess.run(
@@ -75,25 +79,25 @@ class SpotifyController:
         return proc.stdout.strip()
 
     def ensure_running(self) -> None:
-        self._osa('tell application "Spotify" to activate')
+        """Launch Spotify in the BACKGROUND without stealing focus."""
+        # `open -g -j` = open in background (-g) and hidden (-j); never foregrounds.
+        subprocess.run(["open", "-g", "-j", "-a", "Spotify"], timeout=10)
+        # Wait until the app is scriptable (freshly launched apps aren't instant).
+        for _ in range(20):
+            try:
+                if self._osa('tell application "Spotify" to return running') == "true":
+                    return
+            except SpotifyError:
+                pass
+            time.sleep(0.25)
 
-    def player_state(self) -> str:
-        # "playing" | "paused" | "stopped"
-        try:
-            return self._osa('tell application "Spotify" to return player state as string')
-        except SpotifyError:
-            return "stopped"
-
-    def _current_id(self) -> str:
-        try:
-            return self._osa('tell application "Spotify" to return id of current track')
-        except SpotifyError:
-            return ""
+    def _play_context(self, uri: str) -> None:
+        if not _URI_RE.match(uri):
+            raise SpotifyError(f"Refusing to play malformed URI: {uri!r}")
+        self._osa(f'tell application "Spotify" to play track "{uri}"')
 
     def play_uri(self, uri: str) -> None:
-        if not _TRACK_URI_RE.match(uri):
-            raise SpotifyError(f"Refusing to play malformed track URI: {uri!r}")
-        self._osa(f'tell application "Spotify" to play track "{uri}"')
+        self._play_context(uri)
 
     def pause(self) -> None:
         self._osa('tell application "Spotify" to pause')
@@ -111,14 +115,32 @@ class SpotifyController:
         level = max(0, min(100, int(level)))
         self._osa(f'tell application "Spotify" to set sound volume to {level}')
 
+    def set_repeat(self, enabled: bool) -> None:
+        self._osa(f'tell application "Spotify" to set repeating to {str(enabled).lower()}')
+
+    def set_shuffle(self, enabled: bool) -> None:
+        self._osa(f'tell application "Spotify" to set shuffling to {str(enabled).lower()}')
+
     def current_track(self) -> str:
         return self._osa(
             'tell application "Spotify" to return '
             '(name of current track) & " by " & (artist of current track)'
         )
 
-    # ---- Web API (search) ------------------------------------------------
-    def _access_token(self) -> str:
+    def current_track_uri(self) -> str:
+        uri = self._osa('tell application "Spotify" to return id of current track')
+        if not _URI_RE.match(uri):
+            raise SpotifyError("No valid current track.")
+        return uri
+
+    def player_state(self) -> str:
+        try:
+            return self._osa('tell application "Spotify" to return player state as string')
+        except SpotifyError:
+            return "stopped"
+
+    # ── Web API: app-level (client credentials) ───────────────────────────
+    def _app_token(self) -> str:
         if self._token and time.time() < self._token_expires_at - 30:
             return self._token
         if not self.has_web_api:
@@ -132,16 +154,16 @@ class SpotifyController:
         )
         if resp.status_code != 200:
             raise SpotifyError(f"Token request failed ({resp.status_code}): {resp.text}")
-        payload = resp.json()
-        self._token = payload["access_token"]
-        self._token_expires_at = time.time() + payload.get("expires_in", 3600)
+        p = resp.json()
+        self._token = p["access_token"]
+        self._token_expires_at = time.time() + p.get("expires_in", 3600)
         return self._token
 
     def search_track(self, query: str) -> Track | None:
         resp = requests.get(
             _SEARCH_URL,
             params={"q": query, "type": "track", "limit": 1},
-            headers={"Authorization": f"Bearer {self._access_token()}"},
+            headers={"Authorization": f"Bearer {self._app_token()}"},
             timeout=10,
         )
         if resp.status_code != 200:
@@ -149,79 +171,155 @@ class SpotifyController:
         items = resp.json().get("tracks", {}).get("items", [])
         if not items:
             return None
-        item = items[0]
-        return Track(
-            uri=item["uri"],
-            name=item["name"],
-            artist=", ".join(a["name"] for a in item["artists"]),
+        it = items[0]
+        return Track(it["uri"], it["name"], ", ".join(a["name"] for a in it["artists"]))
+
+    # ── Web API: user-scoped (OAuth refresh token) ────────────────────────
+    def _user_token(self) -> str:
+        if not TOKENS_PATH.exists():
+            raise SpotifyError(
+                "Playlist features need a one-time login: run "
+                "`python -m jarvis.spotify_auth` in your terminal."
+            )
+        data = json.loads(TOKENS_PATH.read_text())
+        if data.get("access_token") and time.time() < data.get("expires_at", 0) - 30:
+            return data["access_token"]
+        # refresh
+        creds = f"{self._client_id}:{self._client_secret}".encode()
+        resp = requests.post(
+            _TOKEN_URL,
+            data={"grant_type": "refresh_token", "refresh_token": data["refresh_token"]},
+            headers={"Authorization": "Basic " + base64.b64encode(creds).decode()},
+            timeout=10,
         )
+        if resp.status_code != 200:
+            raise SpotifyError(f"Token refresh failed ({resp.status_code}): {resp.text}")
+        p = resp.json()
+        data["access_token"] = p["access_token"]
+        data["expires_at"] = time.time() + p.get("expires_in", 3600)
+        if p.get("refresh_token"):
+            data["refresh_token"] = p["refresh_token"]
+        TOKENS_PATH.write_text(json.dumps(data))
+        return data["access_token"]
 
-    # ---- App-UI search+play (no key, best-effort) ------------------------
-    def _try_play_via_app(self, query: str) -> bool:
-        """Open in-app search and try to play the top result.
+    def _me_id(self, token: str) -> str:
+        r = requests.get(f"{_API}/me", headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        r.raise_for_status()
+        return r.json()["id"]
 
-        Returns True only if playback verifiably started (a track is playing and
-        it changed from before), so the caller can trust it or fall back.
-        """
-        before_id = self._current_id()
-        before_state = self.player_state()
+    def find_playlist(self, name: str) -> tuple[str, str] | None:
+        """Return (uri, name) of the user's playlist best-matching `name`."""
+        token = self._user_token()
+        want = name.strip().lower()
+        url = f"{_API}/me/playlists?limit=50"
+        best = None
+        while url:
+            r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
+            if r.status_code != 200:
+                raise SpotifyError(f"Playlist list failed ({r.status_code}): {r.text}")
+            body = r.json()
+            for pl in body.get("items", []):
+                pname = (pl.get("name") or "").strip()
+                low = pname.lower()
+                if low == want:
+                    return pl["uri"], pname
+                if best is None and want in low:
+                    best = (pl["uri"], pname)
+            url = body.get("next")
+        return best
 
-        self.ensure_running()
-        encoded = urllib.parse.quote(query)
-        subprocess.run(["open", f"spotify:search:{encoded}"], timeout=10)
-        time.sleep(1.6)  # let results render
-
-        # Best-effort: focus results and activate the top item via keyboard.
-        # (Spotify is an Electron app; this may be a no-op on some versions,
-        # which is why we verify playback below and fall back if needed.)
-        keystroke = (
-            'tell application "Spotify" to activate\n'
-            'delay 0.3\n'
-            'tell application "System Events" to key code 48\n'   # Tab -> into results
-            'delay 0.3\n'
-            'tell application "System Events" to key code 36\n'   # Return -> play
+    def add_current_to_playlist(self, playlist_name: str) -> tuple[str, str]:
+        """Add the currently playing track to a named playlist. Returns (track, playlist)."""
+        track_uri = self.current_track_uri()
+        track_label = self.current_track()
+        found = self.find_playlist(playlist_name)
+        if not found:
+            raise SpotifyError(f"No playlist named '{playlist_name}'.")
+        pl_uri, pl_name = found
+        pl_id = pl_uri.split(":")[-1]
+        token = self._user_token()
+        r = requests.post(
+            f"{_API}/playlists/{pl_id}/tracks",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"uris": [track_uri]},
+            timeout=10,
         )
-        try:
-            self._osa(keystroke)
-        except SpotifyError:
-            pass  # Accessibility not granted / keystroke failed -> verify anyway
+        if r.status_code not in (200, 201):
+            raise SpotifyError(f"Add to playlist failed ({r.status_code}): {r.text}")
+        return track_label, pl_name
 
-        time.sleep(1.0)
-        after_id = self._current_id()
-        playing = self.player_state() == "playing"
-        changed = after_id and after_id != before_id
-        started = before_state != "playing"
-        return playing and (changed or started)
+    # ── High-level ────────────────────────────────────────────────────────
+    def play_query(self, query: str, mode: str = "auto", loop: bool = False) -> PlayResult:
+        """Search for a song and play it in the background. `loop` sets repeat.
 
-    # ---- High-level: hybrid resolve + play -------------------------------
-    def play_query(self, query: str, mode: str = "auto") -> PlayResult:
-        """Resolve a spoken query to a track and play it in the desktop app.
-
-        mode: "app" (UI only), "web" (Web API only), or "auto" (app first,
-        Web API fallback).
+        The app-UI path uses System Events keystrokes (to the frontmost app), so it
+        is only used when there's no Web API key — otherwise `auto` uses the fully
+        background web path that never steals focus or keystrokes.
         """
-        if mode in ("app", "auto"):
+        use_app = mode == "app" or (mode == "auto" and not self.has_web_api)
+        if use_app:
             try:
                 if self._try_play_via_app(query):
+                    if loop:
+                        self.set_repeat(True)
                     return PlayResult(label=self.current_track(), source="app")
             except SpotifyError:
                 pass
             if mode == "app":
-                raise SpotifyError(
-                    "Couldn't auto-play from the Spotify app. Grant Accessibility "
-                    "permission, or enable Web API fallback with a Spotify key."
-                )
+                raise SpotifyError("Couldn't play from the Spotify app UI.")
 
-        # Web API fallback / explicit web mode
         if not self.has_web_api:
             raise SpotifyError(
-                "The app couldn't auto-play and no Spotify API key is set for "
-                "fallback. Add SPOTIFY_CLIENT_ID/SECRET, or grant Accessibility "
-                "permission to Terminal."
+                "The app couldn't auto-play and no Spotify API key is set for search."
             )
         track = self.search_track(query)
         if track is None:
             raise SpotifyError(f"No results for '{query}'.")
         self.ensure_running()
         self.play_uri(track.uri)
+        if loop:
+            self.set_repeat(True)
         return PlayResult(label=track.label, source="web")
+
+    def play_playlist(self, name: str, loop: bool = False) -> str:
+        """Play one of the user's playlists by name (background)."""
+        found = self.find_playlist(name)
+        if not found:
+            raise SpotifyError(f"No playlist named '{name}'.")
+        uri, pl_name = found
+        self.ensure_running()
+        self._play_context(uri)
+        self.set_repeat(loop)
+        return pl_name
+
+    def _try_play_via_app(self, query: str) -> bool:
+        """Background-friendly app search+play; verifies playback actually started."""
+        before_id = ""
+        try:
+            before_id = self.current_track_uri()
+        except SpotifyError:
+            pass
+        before_state = self.player_state()
+
+        self.ensure_running()
+        encoded = urllib.parse.quote(query)
+        # `open -g` keeps Spotify in the background (does not steal focus).
+        subprocess.run(["open", "-g", f"spotify:search:{encoded}"], timeout=10)
+        time.sleep(1.6)
+        try:
+            self._osa(
+                'tell application "System Events" to key code 48\n'  # Tab
+                "delay 0.3\n"
+                'tell application "System Events" to key code 36'  # Return
+            )
+        except SpotifyError:
+            pass
+        time.sleep(1.0)
+        after_id = ""
+        try:
+            after_id = self.current_track_uri()
+        except SpotifyError:
+            pass
+        playing = self.player_state() == "playing"
+        changed = bool(after_id) and after_id != before_id
+        return playing and (changed or before_state != "playing")
