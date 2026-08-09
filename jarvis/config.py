@@ -34,8 +34,10 @@ class Config:
     # local mode stays snappy (qwen3 "thinks" for 10-40s per turn — bad for voice).
     # Bump to qwen2.5:7b-instruct or qwen3:8b for stronger answers if you prefer.
     ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
-    # Device-action agents — compact non-thinking model for snappy tool calls.
-    tool_model: str = os.getenv("JARVIS_TOOL_MODEL", "qwen2.5:3b-instruct")
+    # Device-action agents — non-thinking, reliable tool-caller on ANY song/artist
+    # (7B: 8/8 in testing; 3B misfired — refused some titles, hallucinated loop).
+    # ~2s/call. Drop to qwen2.5:3b-instruct for speed if you accept less accuracy.
+    tool_model: str = os.getenv("JARVIS_TOOL_MODEL", "qwen2.5:7b-instruct")
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 
     # STT backend: "mlx" (Metal, fastest on Apple Silicon) or "faster" (CPU).

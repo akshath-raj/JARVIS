@@ -160,6 +160,8 @@ class SpotifyController:
         return self._token
 
     def search_track(self, query: str) -> Track | None:
+        if not (query or "").strip():
+            raise SpotifyError("empty search query")
         resp = requests.get(
             _SEARCH_URL,
             params={"q": query, "type": "track", "limit": 1},

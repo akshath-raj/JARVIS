@@ -63,20 +63,17 @@ Each job uses a right-sized local model, independently swappable:
 
 | Task | Default | Env |
 |---|---|---|
-| Chat / routing / reasoning | `qwen3:8b` | `OLLAMA_MODEL` |
-| Device tool-calling (Spotify) | `qwen2.5:3b-instruct` | `JARVIS_TOOL_MODEL` |
+| Chat / routing / reasoning | `qwen2.5:3b-instruct` | `OLLAMA_MODEL` |
+| Device tool-calling (Spotify) | `qwen2.5:7b-instruct` | `JARVIS_TOOL_MODEL` |
 
-**Why non-thinking models for tools/relevance:** Qwen3 is a *reasoning* model — it
-emits a long "thinking" trace before a tool call (seconds of latency), and a token
-cap just truncates it before the call. The compact **Qwen2.5-Instruct** models are
-non-thinking, so they emit tool calls immediately — far snappier for voice. For
-even stronger function-calling, point `JARVIS_TOOL_MODEL` at a fine-tuned model
-(Katanemo `Arch-Function-3B`, MadeAgents `Hammer2.1-3b`, Salesforce `xLAM-2-1b`;
-pull via `ollama pull hf.co/<repo>`).
-
-**Fallback:** if the compact tool model struggles with the richer toolset
-(playlists, loop, add-to-playlist), bump it up: `JARVIS_TOOL_MODEL=qwen3:8b`.
-Use the smaller model when it performs well; fall back to 8B only if it doesn't.
+**Why non-thinking Qwen2.5 (not Qwen3):** Qwen3 is a *reasoning* model — it emits a
+long "thinking" trace before every tool call (10–40s of latency), which is
+unusable for voice. Qwen2.5-Instruct is non-thinking, so tool calls are immediate.
+The device model is **7B** because 3B misfired on arbitrary songs/artists (it asked
+for clarification or even faked "now playing" without calling the tool); 7B is
+reliable and still non-thinking (fast). Tune via `JARVIS_TOOL_MODEL`
+(`qwen2.5:3b-instruct` for speed, `qwen3:8b` for max capability, or a fine-tuned
+caller like Katanemo `Arch-Function-3B` via `ollama pull hf.co/<repo>`).
 
 Multi-agent hub-and-spoke (no single agent does everything — control is handed off):
 ```
