@@ -16,12 +16,17 @@ actually started, and fall back to the Web API only if it didn't.
 from __future__ import annotations
 
 import base64
+import re
 import subprocess
 import time
 import urllib.parse
 from dataclasses import dataclass
 
 import requests
+
+# Spotify track URIs are always this shape; validating before interpolating into
+# AppleScript prevents any injection through the one templated value.
+_TRACK_URI_RE = re.compile(r"^spotify:track:[A-Za-z0-9]+$")
 
 _TOKEN_URL = "https://accounts.spotify.com/api/token"
 _SEARCH_URL = "https://api.spotify.com/v1/search"
@@ -86,6 +91,8 @@ class SpotifyController:
             return ""
 
     def play_uri(self, uri: str) -> None:
+        if not _TRACK_URI_RE.match(uri):
+            raise SpotifyError(f"Refusing to play malformed track URI: {uri!r}")
         self._osa(f'tell application "Spotify" to play track "{uri}"')
 
     def pause(self) -> None:

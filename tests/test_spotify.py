@@ -106,6 +106,19 @@ def test_volume_clamped(monkeypatch):
     assert "set sound volume to 100" in scripts[0]
 
 
+def test_play_uri_rejects_injection(monkeypatch):
+    """The one templated AppleScript value must reject anything but a track URI."""
+    sc = SpotifyController()
+    ran = []
+    monkeypatch.setattr(sc, "_osa", lambda s: ran.append(s))
+    sc.play_uri("spotify:track:2JiDi0qAXsPwhPqA2qaKGt")  # valid
+    assert len(ran) == 1
+    for bad in ['spotify:track:x" \n do shell script "rm -rf ~"', "spotify:playlist:x", "; ls"]:
+        with pytest.raises(SpotifyError):
+            sc.play_uri(bad)
+    assert len(ran) == 1  # no extra AppleScript executed for bad inputs
+
+
 # ── Live (opt-in) ─────────────────────────────────────────────────────────
 @pytest.mark.skipif(os.getenv("RUN_SPOTIFY_LIVE") != "1", reason="live test; set RUN_SPOTIFY_LIVE=1")
 def test_live_play():

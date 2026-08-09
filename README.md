@@ -58,21 +58,29 @@ you can point `JARVIS_TOOL_MODEL` at a fine-tuned model, e.g. Katanemo
 
 Multi-agent hub-and-spoke (no single agent does everything — control is handed off):
 ```
-                        ┌──────────────┐
-        session ───────►│ RouterAgent  │  greets, routes only
-                        └──────┬───────┘
-                     transfer_to_* │ ▲ back_to_coordinator
-          ┌───────────┬───────────┼───────────┬───────────┐
-          ▼           ▼           ▼           ▼
-    ┌──────────┐ ┌─────────┐ ┌──────────┐ ┌─────────┐
-    │ ChatAgent│ │MusicAgent│ │ Calendar │ │  Files  │
-    │ Q&A      │ │ Spotify  │ │ (macOS)  │ │(Spotlight)│
-    └──────────┘ └─────────┘ └──────────┘ └─────────┘
+                 ┌──────────────┐
+   session ─────►│ RouterAgent  │  greets, routes only
+                 └──────┬───────┘
+          transfer_to_* │ ▲ back_to_coordinator
+             ┌──────────┴──────────┐
+             ▼                     ▼
+       ┌──────────┐         ┌────────────┐
+       │ ChatAgent│         │ MusicAgent │
+       │ Q&A only │         │  Spotify   │
+       └──────────┘         └────────────┘
 ```
 The coordinator routes; each specialist owns its own tools and hands control
-**back** to the coordinator to switch domains. Shared state (`SpotifyController`,
-wake gate) lives in `session.userdata`; handoffs pass conversation history via
-`chat_ctx` but reset each agent's own instructions.
+**back** to the coordinator to switch domains. Shared state lives in
+`session.userdata`; handoffs pass conversation history via `chat_ctx` but reset
+each agent's own instructions.
+
+### Sandboxing
+The only capability that touches your machine is **Spotify playback control**
+(play / pause / resume / next / volume / now-playing). There are **no file,
+shell, calendar, network-write, or delete/remove tools** exposed to any model.
+ChatAgent answers from the model's own knowledge only. The single value
+interpolated into AppleScript (a track URI) is regex-validated first, so it can't
+be used for injection.
 
 ## Setup
 

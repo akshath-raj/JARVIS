@@ -20,9 +20,6 @@ class RouterAgent(BaseJarvisAgent):
                 "call the matching tool:\n"
                 "- Music or Spotify (play a song, pause, skip, volume, what's "
                 "playing) -> transfer_to_music.\n"
-                "- Calendar or scheduling (events, meetings, agenda, reminders) "
-                "-> transfer_to_calendar.\n"
-                "- Files or folders (find, open, list files) -> transfer_to_files.\n"
                 "- General questions, facts, or chit-chat -> transfer_to_chat.\n"
                 "Do not describe the routing; just call the tool. " + VOICE_STYLE
             ),
@@ -46,26 +43,6 @@ class RouterAgent(BaseJarvisAgent):
         from jarvis.agents.music import MusicAgent
 
         return MusicAgent(
-            chat_ctx=self.chat_ctx.copy(exclude_instructions=True),
-            llm=context.userdata.local_llm,
-        )
-
-    @function_tool()
-    async def transfer_to_calendar(self, context: RunContext[JarvisContext]):
-        """Route to the calendar specialist for events, meetings, and scheduling."""
-        from jarvis.agents.calendar import CalendarAgent
-
-        return CalendarAgent(
-            chat_ctx=self.chat_ctx.copy(exclude_instructions=True),
-            llm=context.userdata.local_llm,
-        )
-
-    @function_tool()
-    async def transfer_to_files(self, context: RunContext[JarvisContext]):
-        """Route to the files specialist for finding, listing, or opening files."""
-        from jarvis.agents.files import FileAgent
-
-        return FileAgent(
             chat_ctx=self.chat_ctx.copy(exclude_instructions=True),
             llm=context.userdata.local_llm,
         )
