@@ -1,8 +1,67 @@
 # JARVIS — a voice AI assistant (local-first, cloud-optional)
 
 A voice-enabled assistant in the spirit of Iron Man's JARVIS. Wake it with
-**"Hey Jarvis,"** ask general questions, and control apps — starting with Spotify.
-It runs **fully local by default**, or can switch to a cloud pipeline.
+**"Hey Jarvis,"** ask general questions, and control apps — Spotify for music and
+Chrome for the browser/web. It runs **fully local by default**, or can switch to a
+cloud pipeline.
+
+The brain is a **LangGraph** react-style agent (all tools bound to one local model)
+that also **remembers you over time**. It answers general facts itself, controls
+Spotify, drives Chrome, and searches the web:
+
+- *"play despacito"*, *"pause"*, *"play my liked songs"* → Spotify.
+- *"open instagram"*, *"play some lofi on youtube"*, *"open a new MrBeast video"*,
+  *"show me some reels"* → Chrome.
+- *"what's the latest news on X"*, *"current price of bitcoin"* → web search
+  (Tavily). Set `TAVILY_API_KEY` in `.env`.
+- *"download my OS study materials by Prof X from VTOP"*, *"check my AWS balance"* →
+  the **browser agent** ([browser-use](https://github.com/browser-use/browser-use))
+  drives your **real logged-in Chrome** and does the multi-step workflow, then
+  speaks the result. One-time setup: `bash scripts/setup_browser_agent.sh`.
+
+  The browser agent runs in an **isolated venv** (`.venv-browser`, invoked
+  out-of-process) because its deps conflict with the LiveKit/LangGraph stack. It
+  uses your **real Chrome profile** (saved logins/passwords), so **Chrome must be
+  closed** when a task runs — JARVIS will ask you to close it otherwise. Reasoning
+  uses a frontier model (`gpt-4.1-mini` via `OPENAI_API_KEY`) because local models
+  can't drive a browser reliably. ⚠️ Two conscious tradeoffs: **browsed page
+  content goes to OpenAI**, and with **full autonomy on your logged-in profile** a
+  malicious page could prompt-inject the agent — it runs only when you ask, with
+  step/time caps, but no per-action confirmations. It fills forms, clicks, uploads
+  files, logs in (via your saved sessions/passwords), and fetches info. If a
+  **captcha** blocks a task, it auto-solves distorted-text/image captchas with a
+  **local open-source vision model** (Qwen2.5-VL via Ollama — free, private, no
+  service): `ollama pull qwen2.5vl:7b` (toggle `JARVIS_BROWSER_CAPTCHA`). It runs
+  headless on a **clone of your Chrome profile** so it works even while your Chrome
+  is open (`JARVIS_BROWSER_CLONE_PROFILE=auto`).
+- *"download the latest assignment from VTOP and explain it"* → *"finish it, make it
+  a jupyter notebook"* → *"open it"* → the **assignment workflow**: JARVIS downloads
+  the document (browser agent), **reads and explains it aloud** (local model), then
+  hands it to an **AI to complete** it, **assembles the answer file** in the format
+  you asked for (`.ipynb`/`.docx`/`.pptx`/`.py`), announces it's done, and **opens it**
+  in the right app (Preview / Word / PowerPoint / VS Code).
+
+  Which AI does the work is chosen by availability, in your preferred order
+  (`JARVIS_AI_APP_ORDER`, default `claude_desktop,browser`). The **Claude desktop app**
+  is used only if it's installed, macOS **Accessibility** is granted to JARVIS, and
+  `JARVIS_CLAUDE_DESKTOP=1` (it's Electron UI-automation — experimental, and answer
+  extraction is unreliable); otherwise it **falls back to the browser** (claude.ai, your
+  logged-in Pro session, driven by the browser agent). The assignment content goes to
+  whichever AI completes it; the explain step is local.
+
+**Persistent memory (GPT-style, fully local).** JARVIS learns what you like from
+what you do (songs played, sites/searches), from explicit *"remember that I…"*, and
+from durable facts mined out of conversation in the background. Relevant memories
+are recalled each turn to personalise replies — ask *"play me something I'd enjoy"*
+or *"what do you know about me?"*, and *"forget that…"* to remove one. Memories live
+in `~/.jarvis/memory/` (local JSON + Ollama embeddings); nothing leaves the machine.
+Needs an embedding model: `ollama pull nomic-embed-text`.
+
+Why one agent with all tools rather than multi-agent handoffs? On local models,
+agent handoffs are slow and make the model speak plumbing / narrate instead of
+calling tools (measured). A single shallow graph is fast (~2–4s/action) and
+reliable. Set `JARVIS_ORCHESTRATOR=native` to fall back to the previous
+hand-rolled agent.
 
 ## Two modes (`JARVIS_MODE`)
 
@@ -21,7 +80,7 @@ back to OpenAI based on which API key is set.
 
 Voice pipeline (all local):
 ```
-mic ─► Silero VAD ─► Whisper STT ─► qwen3 (Ollama) ─► Kokoro TTS ─► speaker
+mic ─► Silero VAD ─► Whisper STT ─► LangGraph brain (Ollama + memory) ─► Kokoro TTS ─► speaker
 ```
 
 Activation: **wake word with smart follow-up**.

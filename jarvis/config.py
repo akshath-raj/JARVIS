@@ -70,10 +70,101 @@ class Config:
     # question, the next turn is answered WITHOUT the wake word for a short window;
     # after a normal answer it goes back to sleep.
     wake_enabled: bool = _truthy(os.getenv("JARVIS_WAKE", "1"))
+    # Include common Whisper mishearings of "jarvis" (jairus/jarvus/jervis/javis) so
+    # the wake gate still fires when the STT slightly mistranscribes the name.
     wake_words: tuple[str, ...] = tuple(
-        w.strip() for w in os.getenv("JARVIS_WAKE_WORDS", "jarvis").split(",") if w.strip()
+        w.strip()
+        for w in os.getenv(
+            "JARVIS_WAKE_WORDS", "jarvis,jairus,jarvus,jervis,javis"
+        ).split(",")
+        if w.strip()
     )
     wake_followup_seconds: float = float(os.getenv("JARVIS_WAKE_FOLLOWUP", "20"))
+    # After a normal (non-question) answer, optionally stay awake briefly so
+    # back-to-back commands work without repeating the wake word. OFF by default:
+    # when music/video plays through SPEAKERS the mic transcribes it as fake user
+    # turns while awake, which makes JARVIS re-run tools in a loop. Safe to enable
+    # (e.g. 8) only with headphones/good echo cancellation.
+    wake_continuation_seconds: float = float(os.getenv("JARVIS_WAKE_CONTINUATION", "0"))
+
+    # ── Orchestrator / brain ───────────────────────────────────────────
+    # "langgraph" (default): LangGraph react-agent brain + persistent memory.
+    # "native": the previous hand-rolled LiveKit supervisor (fallback / rollback).
+    orchestrator: str = os.getenv("JARVIS_ORCHESTRATOR", "langgraph")
+    # Local embedding model (kept for optional future use; memory no longer indexes).
+    embed_model: str = os.getenv("JARVIS_EMBED_MODEL", "nomic-embed-text")
+    embed_dims: int = int(os.getenv("JARVIS_EMBED_DIMS", "768"))  # nomic-embed-text = 768
+    # Where the distilled profile (about_user.md) + transient log (activity.jsonl)
+    # persist. ~ is expanded.
+    memory_dir: str = os.path.expanduser(os.getenv("JARVIS_MEMORY_DIR", "~/.jarvis/memory"))
+    # Small, fast model used off the voice path to distill the activity/conversation
+    # log into the durable user profile.
+    extract_model: str = os.getenv("JARVIS_EXTRACT_MODEL", "qwen2.5:3b-instruct")
+    # Distill the transient log into about_user.md after every N logged entries,
+    # then clear the log (so raw prompts/activity are never kept permanently).
+    summarize_every: int = int(
+        os.getenv("JARVIS_SUMMARIZE_EVERY", os.getenv("JARVIS_EXTRACT_EVERY", "15"))
+    )
+
+    # ── Browser / Web (Chrome + Tavily) ────────────────────────────────
+    # Which browser app to drive (macOS app name).
+    browser_app: str = os.getenv("JARVIS_BROWSER_APP", "Google Chrome")
+    # Tavily powers live web search / recent news. Get a key at tavily.com.
+    tavily_api_key: str = os.getenv("TAVILY_API_KEY", "")
+
+    # ── Browser AGENT (browser-use, isolated subprocess) ───────────────
+    # Multi-step, logged-in web workflows (download VTOP materials, check AWS
+    # balance). Runs in .venv-browser out-of-process; see scripts/setup_browser_agent.sh.
+    browser_agent_enabled: bool = _truthy(os.getenv("JARVIS_BROWSER_AGENT", "1"))
+    browser_venv: str = os.getenv("JARVIS_BROWSER_VENV", ".venv-browser")
+    # Frontier model does the reasoning (local models can't drive a browser
+    # reliably — verified). Uses OPENAI_API_KEY.
+    browser_frontier_model: str = os.getenv("JARVIS_BROWSER_FRONTIER_MODEL", "gpt-4.1-mini")
+    # Experimental local-first path, OFF by default (it hallucinates + false-successes).
+    browser_use_local: bool = _truthy(os.getenv("JARVIS_BROWSER_USE_LOCAL", "0"))
+    browser_local_model: str = os.getenv("JARVIS_BROWSER_LOCAL_MODEL", "qwen2.5:7b-instruct")
+    # Real Chrome profile (saved logins/passwords). Chrome must be CLOSED when a task runs.
+    browser_chrome_path: str = os.getenv(
+        "JARVIS_BROWSER_CHROME_PATH",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    )
+    browser_user_data_dir: str = os.path.expanduser(
+        os.getenv("JARVIS_BROWSER_USER_DATA_DIR", "~/Library/Application Support/Google/Chrome")
+    )
+    browser_profile_dir: str = os.getenv("JARVIS_BROWSER_PROFILE", "Default")
+    # A Chrome profile dir can only be used by ONE Chrome process at a time. To run
+    # headless in the background WHILE your Chrome is open, JARVIS clones the profile
+    # (cookies/logins, minus caches) to its own dir and drives that copy.
+    #   auto (default) = clone only when Chrome is running; else use the real profile.
+    #   always = always clone (headless); never = require Chrome closed (no clone).
+    browser_clone_profile: str = os.getenv("JARVIS_BROWSER_CLONE_PROFILE", "auto")
+    browser_clone_dir: str = os.path.expanduser(
+        os.getenv("JARVIS_BROWSER_CLONE_DIR", "~/.jarvis/chrome-clone")
+    )
+    browser_downloads: str = os.path.expanduser(os.getenv("JARVIS_BROWSER_DOWNLOADS", "~/Downloads"))
+    browser_max_steps: int = int(os.getenv("JARVIS_BROWSER_MAX_STEPS", "40"))
+    browser_local_max_steps: int = int(os.getenv("JARVIS_BROWSER_LOCAL_MAX_STEPS", "12"))
+    browser_timeout: int = int(os.getenv("JARVIS_BROWSER_TIMEOUT", "240"))
+    browser_headless: bool = _truthy(os.getenv("JARVIS_BROWSER_HEADLESS", "0"))
+    # Auto-solve captchas that block a task, using a LOCAL open-source vision model
+    # (Qwen2.5-VL via Ollama) — no third-party service. Needs: ollama pull qwen2.5vl:7b.
+    captcha_enabled: bool = _truthy(os.getenv("JARVIS_BROWSER_CAPTCHA", "1"))
+    captcha_model: str = os.getenv("JARVIS_CAPTCHA_MODEL", "qwen2.5vl:7b")
+
+    # ── Documents / assignments ────────────────────────────────────────
+    # Preferred AI apps for "do the assignment", in order. The first AVAILABLE one
+    # wins: claude_desktop is only available if Claude.app is installed AND macOS
+    # Accessibility is granted to this process, so by default it falls through to
+    # the browser (claude.ai). An "openai" API backend can be added later.
+    ai_app_order: tuple[str, ...] = tuple(
+        w.strip() for w in os.getenv("JARVIS_AI_APP_ORDER", "claude_desktop,browser").split(",") if w.strip()
+    )
+    # Model that reads & explains a downloaded document (local by default).
+    explain_model: str = os.getenv("JARVIS_EXPLAIN_MODEL", os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct"))
+    # Where assembled answer files are written.
+    answers_dir: str = os.path.expanduser(
+        os.getenv("JARVIS_ANSWERS_DIR", os.getenv("JARVIS_BROWSER_DOWNLOADS", "~/Downloads"))
+    )
 
     # ── Spotify ────────────────────────────────────────────────────────
     spotify_client_id: str = os.getenv("SPOTIFY_CLIENT_ID", "")

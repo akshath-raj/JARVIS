@@ -4,10 +4,12 @@ Rules:
   * ASLEEP by default — a turn is only answered if it contains the wake word
     ("jarvis" or "hey jarvis"); the wake word is stripped before the agent sees
     the request.
-  * If JARVIS's reply is a CLARIFICATION QUESTION, a short follow-up window opens
+  * If JARVIS's reply is a CLARIFICATION QUESTION, a longer follow-up window opens
     and the user's next turn is answered WITHOUT the wake word.
-  * If JARVIS's reply is an ANSWER (not a question), it goes back to sleep — the
-    user must say the wake word again.
+  * If JARVIS's reply is an ANSWER (not a question), a shorter CONTINUATION window
+    opens so back-to-back commands work — e.g. "play some music" then, right
+    after, "play something calming" — without repeating the wake word. Once the
+    window lapses it goes back to sleep and the wake word is required again.
 
 Transcript-based (not acoustic) so both "jarvis" and "hey jarvis" work, and so it
 composes with the smart follow-up state.
@@ -27,9 +29,11 @@ class WakeController:
         enabled: bool = True,
         words: tuple[str, ...] = ("jarvis",),
         followup_seconds: float = 20.0,
+        continuation_seconds: float = 0.0,
     ):
         self.enabled = enabled
         self.followup_seconds = followup_seconds
+        self.continuation_seconds = continuation_seconds
         self._awake_until = 0.0
         alt = "|".join(re.escape(w) for w in words)
         # Wake word as a leading prefix ("hey jarvis, play ...") ...
@@ -71,8 +75,12 @@ class WakeController:
         return True, (remainder if remainder else None)
 
     def note_reply(self, text: str) -> None:
-        """Called after JARVIS replies: stay awake only if it asked a question."""
+        """Called after JARVIS replies. A question opens the longer follow-up
+        window; any other reply opens the shorter continuation window so the user
+        can chain commands (e.g. change the music) without repeating the wake word."""
         if (text or "").strip().endswith("?"):
             self._awake_until = time.time() + self.followup_seconds
+        elif self.continuation_seconds > 0:
+            self._awake_until = time.time() + self.continuation_seconds
         else:
             self._awake_until = 0.0

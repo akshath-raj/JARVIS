@@ -19,8 +19,11 @@ from livekit.agents import llm as _llm
 from livekit.agents import stt as _stt
 from livekit.agents import tts as _tts
 
-# Main-thread plugin registration (do NOT move these into functions).
-from livekit.plugins import cerebras, deepgram, openai  # noqa: E402
+# Main-thread plugin registration (do NOT move these into functions). `langchain`
+# is imported here too so the LangGraph LLMAdapter plugin registers on the MAIN
+# thread — jarvis/graph/adapter.py imports it lazily from the (worker-thread)
+# entrypoint, and LiveKit refuses plugin registration off the main thread.
+from livekit.plugins import cerebras, deepgram, langchain, openai  # noqa: E402,F401
 
 try:
     from livekit.plugins.turn_detector.multilingual import MultilingualModel

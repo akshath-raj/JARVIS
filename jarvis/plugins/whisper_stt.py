@@ -21,6 +21,12 @@ logger = logging.getLogger("jarvis.stt")
 
 _WHISPER_SR = 16000
 
+# Bias the decoder toward the assistant's name so it stops mishearing "Jarvis" as
+# "Jairus"/"Jarvus"/etc. Whisper uses the previous-text prompt to condition
+# spelling; naming Jarvis here makes the correct token far likelier. Kept short and
+# neutral so it doesn't hallucinate the word into silence.
+_NAME_BIAS_PROMPT = "Hey Jarvis. The assistant's name is Jarvis."
+
 # HF repos for the Metal (mlx) models, keyed by the faster-whisper-style name.
 _MLX_REPOS = {
     "tiny.en": "mlx-community/whisper-tiny.en-mlx",
@@ -72,12 +78,21 @@ class WhisperSTT(stt.STT):
             import mlx_whisper
 
             result = mlx_whisper.transcribe(
-                samples, path_or_hf_repo=self._mlx_repo, language=lang, fp16=True
+                samples,
+                path_or_hf_repo=self._mlx_repo,
+                language=lang,
+                fp16=True,
+                initial_prompt=_NAME_BIAS_PROMPT,
             )
             text = (result.get("text") or "").strip()
         else:
             segments, _ = self._faster.transcribe(
-                samples, language=lang, beam_size=1, vad_filter=False
+                samples,
+                language=lang,
+                beam_size=1,
+                vad_filter=False,
+                initial_prompt=_NAME_BIAS_PROMPT,
+                hotwords="Jarvis",
             )
             text = " ".join(seg.text for seg in segments).strip()
 

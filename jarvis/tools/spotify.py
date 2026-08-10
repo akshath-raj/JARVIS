@@ -150,6 +150,19 @@ class SpotifyController:
         level = max(0, min(100, int(level)))
         self._osa(f'tell application "Spotify" to set sound volume to {level}')
 
+    def current_volume(self) -> int:
+        try:
+            return int(self._osa('tell application "Spotify" to return sound volume'))
+        except (SpotifyError, ValueError):
+            return 50  # sensible default if Spotify won't report it
+
+    def nudge_volume(self, up: bool, step: int = 20) -> int:
+        """Raise/lower the volume by `step` relative to the current level; returns the
+        new level. Used for 'turn it up/down' where no absolute number is given."""
+        new = max(0, min(100, self.current_volume() + (step if up else -step)))
+        self.set_volume(new)
+        return new
+
     def set_repeat(self, enabled: bool) -> None:
         self._osa(f'tell application "Spotify" to set repeating to {str(enabled).lower()}')
 

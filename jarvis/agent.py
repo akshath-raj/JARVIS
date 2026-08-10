@@ -1,11 +1,11 @@
 """JARVIS entrypoint — local (or cloud) voice assistant.
 
-Modes (JARVIS_MODE): 0 = LOCAL (Whisper + Ollama + Kokoro), 1 = CLOUD
-(Deepgram STT+TTS + Cerebras/OpenAI).
+Voice modes (JARVIS_MODE): 0 = LOCAL (Whisper + Ollama + Kokoro), 1 = CLOUD.
 
-A single JarvisAgent answers questions and controls Spotify. Wake word ("jarvis"
-/ "hey jarvis") gates the session with smart follow-up (toggle JARVIS_WAKE=0).
-Shared state (Spotify controller, wake state) lives in session.userdata.
+Brain (JARVIS_ORCHESTRATOR):
+  * "langgraph" (default) — a LangGraph react-style graph with all tools + a
+    persistent, personalising memory store, wrapped by VoiceLLMAdapter.
+  * "native" — the previous hand-rolled LiveKit agent (fallback / rollback).
 
 Run locally in your terminal (uses your mic + speakers, no LiveKit cloud):
 
@@ -20,10 +20,8 @@ from livekit.plugins import silero
 
 from jarvis import pipeline
 from jarvis.activation import WakeController
-from jarvis.agents import JarvisAgent
 from jarvis.config import config
 from jarvis.context import JarvisContext
-from jarvis.tools.spotify import SpotifyController
 
 logger = logging.getLogger("jarvis")
 
@@ -33,21 +31,87 @@ def prewarm(proc: JobProcess) -> None:
     proc.userdata["vad"] = silero.VAD.load(min_silence_duration=0.4)
 
 
-async def entrypoint(ctx: JobContext) -> None:
-    logger.info("JARVIS starting — mode: %s", pipeline.describe())
-
-    userdata = JarvisContext(
-        spotify=SpotifyController(
-            config.spotify_client_id, config.spotify_client_secret
-        ),
-        activation=WakeController(
-            enabled=config.wake_enabled,
-            words=config.wake_words,
-            followup_seconds=config.wake_followup_seconds,
-        ),
-        search_mode=config.spotify_search_mode,
+def _wake() -> WakeController:
+    return WakeController(
+        enabled=config.wake_enabled,
+        words=config.wake_words,
+        followup_seconds=config.wake_followup_seconds,
+        continuation_seconds=config.wake_continuation_seconds,
     )
 
+
+async def entrypoint(ctx: JobContext) -> None:
+    if config.orchestrator == "native":
+        await _entrypoint_native(ctx)
+    else:
+        await _entrypoint_langgraph(ctx)
+
+
+async def _entrypoint_langgraph(ctx: JobContext) -> None:
+    from jarvis.agents.graph_agent import GraphAgent
+    from jarvis.browser_agent.announcer import Announcer
+    from jarvis.graph import VoiceLLMAdapter, build_graph, describe
+
+    logger.info("JARVIS starting — voice: %s | brain: %s", pipeline.describe(), describe())
+    announcer = Announcer()  # the browser agent speaks its result when a bg task finishes
+    graph, memory = build_graph(announce=announcer.announce)
+
+    userdata = JarvisContext(activation=_wake(), memory=memory)
+    session = AgentSession[JarvisContext](
+        userdata=userdata,
+        stt=pipeline.build_stt(),
+        llm=VoiceLLMAdapter(graph=graph),
+        tts=pipeline.build_tts(),
+        turn_detection=pipeline.build_turn_detection(),
+        vad=ctx.proc.userdata.get("vad") or silero.VAD.load(min_silence_duration=0.4),
+    )
+
+    @session.on("conversation_item_added")
+    def _on_item(ev) -> None:
+        item = getattr(ev, "item", None)
+        if item is None:
+            return
+        role = getattr(item, "role", None)
+        # Not every conversation item is a message (e.g. AgentHandoff has no
+        # text_content) — access it defensively.
+        text = getattr(item, "text_content", "") or ""
+        if role == "user" and text:
+            # Feed the transient learning log; the memory store distills it into
+            # the durable profile in the background every N entries (see memory.py).
+            memory.log_turn(text)
+        if role == "assistant":
+            userdata.activation.note_reply(text)
+
+    announcer.session = session  # now background browser tasks can speak
+    await session.start(agent=GraphAgent(), room=ctx.room)
+
+
+async def _entrypoint_native(ctx: JobContext) -> None:
+    """Previous architecture: a single hand-rolled agent with all tools."""
+    from openai import OpenAI
+
+    from jarvis.agents import JarvisAgent
+    from jarvis.specialists import BrowserSpecialist
+    from jarvis.tools.browser import BrowserController
+    from jarvis.tools.spotify import SpotifyController
+    from jarvis.tools.web import TavilyClient
+
+    logger.info("JARVIS starting (native) — voice: %s", pipeline.describe())
+    tool_client = OpenAI(base_url=config.ollama_base_url, api_key="ollama")
+    tavily = TavilyClient(config.tavily_api_key)
+    browser = BrowserSpecialist(
+        client=tool_client,
+        model=config.tool_model,
+        browser=BrowserController(config.browser_app),
+        tavily=tavily,
+    )
+    userdata = JarvisContext(
+        spotify=SpotifyController(config.spotify_client_id, config.spotify_client_secret),
+        activation=_wake(),
+        browser=browser,
+        tavily=tavily,
+        search_mode=config.spotify_search_mode,
+    )
     session = AgentSession[JarvisContext](
         userdata=userdata,
         stt=pipeline.build_stt(),
@@ -57,14 +121,12 @@ async def entrypoint(ctx: JobContext) -> None:
         vad=ctx.proc.userdata.get("vad") or silero.VAD.load(min_silence_duration=0.4),
     )
 
-    # After each JARVIS reply, stay awake iff it was a clarification question.
     @session.on("conversation_item_added")
     def _on_item(ev) -> None:
         item = getattr(ev, "item", None)
         if item is not None and getattr(item, "role", None) == "assistant":
-            userdata.activation.note_reply(item.text_content or "")
+            userdata.activation.note_reply(getattr(item, "text_content", "") or "")
 
-    # JarvisAgent.on_enter delivers the greeting.
     await session.start(agent=JarvisAgent(), room=ctx.room)
 
 

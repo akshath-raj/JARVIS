@@ -1,0 +1,8 @@
+# Isolated dependencies for the browser agent ONLY.
+# These are installed into a SEPARATE venv (.venv-browser) via
+# scripts/setup_browser_agent.sh — NEVER into the main .venv, because browser-use
+# pins older/conflicting versions of openai/pydantic/anyio/starlette that would
+# break the LiveKit + LangGraph stack. The browser agent runs out-of-process.
+browser-use>=0.13,<0.14
+# CAPTCHA solving uses a LOCAL vision model via the `ollama` client, which
+# browser-use already installs — no extra dependency, no third-party service.

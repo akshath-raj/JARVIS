@@ -22,13 +22,19 @@ from jarvis.tools.spotify import SpotifyError
 # narrate the tool call as text instead of actually calling it — the tool
 # docstrings already describe usage.
 INSTRUCTIONS = (
-    "You are JARVIS, a concise, witty British butler. For general questions, "
-    "answer directly from your own knowledge in one short spoken sentence — you "
-    "do not need any tool or the internet for facts. For music, ALWAYS call the "
-    "matching Spotify tool to actually perform the action; never merely say you "
-    "did it. Pass exactly what the user asked for as the query and don't "
-    "substitute. If they ask for music but name no song, ask what to play. Only "
-    "loop when they say repeat. Address the user as 'sir' occasionally. /no_think"
+    "You are JARVIS, a concise, witty British butler and the master coordinator. "
+    "Answer well-known or historical facts yourself, from your own knowledge, in "
+    "one short spoken sentence and WITHOUT any tool. For music, ALWAYS call the "
+    "matching Spotify tool to "
+    "actually perform the action; never merely say you did it. Pass exactly what "
+    "the user asked for as the query and don't substitute. If they ask for music "
+    "but name no song, ask what to play. Only loop when they say repeat. "
+    "To open websites or apps, play or find YouTube videos, watch reels or shorts, "
+    "or control the web browser, call the browser tool with the user's full "
+    "request. Only when the answer depends on today's or current information — "
+    "breaking news, live prices, sports scores, weather, anything that changes "
+    "over time — call web_search; never use it for timeless facts. Address the "
+    "user as 'sir' occasionally. /no_think"
 )
 
 
@@ -44,7 +50,36 @@ class JarvisAgent(BaseJarvisAgent):
                 "at the user's service. Do not ask a question."
             )
 
-    # ---- Spotify tools ---------------------------------------------------
+    # ---- Delegation to specialists (browser / web) -----------------------
+    @function_tool()
+    async def browser(self, context: RunContext[JarvisContext], request: str) -> str:
+        """Open websites/apps, play or search YouTube, open reels or shorts, or
+        otherwise control the Chrome browser.
+
+        Args:
+            request: The user's full browser request in their own words, e.g.
+                "open instagram", "play lofi beats on youtube", "open a new MrBeast
+                video", or "show me some reels".
+        """
+        try:
+            return await asyncio.to_thread(context.userdata.browser.run, request)
+        except Exception as e:  # never let a delegated call kill the voice loop
+            return f"error: {e}"
+
+    @function_tool()
+    async def web_search(self, context: RunContext[JarvisContext], query: str) -> str:
+        """Look up current or recent information on the web — news, live prices,
+        recent events, anything you need fresh from the internet.
+
+        Args:
+            query: What to look up, e.g. "latest news on the election".
+        """
+        try:
+            return await asyncio.to_thread(context.userdata.tavily.search, query, "general")
+        except Exception as e:
+            return f"error: {e}"
+
+    # ---- Spotify tools (unchanged) ---------------------------------------
     @function_tool()
     async def play_song(self, context: RunContext[JarvisContext], query: str, loop: bool = False) -> str:
         """Search for a song and play it. Set loop=true to repeat it.

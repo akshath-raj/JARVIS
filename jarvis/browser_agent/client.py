@@ -1,0 +1,182 @@
+"""Client that drives the isolated browser-agent subprocess (main .venv side).
+
+Does NOT import browser_use. Spawns `.venv-browser/bin/python -m
+jarvis.browser_agent.runner`, feeds it a JSON job, and reports the result by voice.
+
+Fire-and-report UX: `run_browser_task` returns a quick spoken ack immediately and
+runs the task in the background (single-flight), then speaks the result via the
+Announcer when it finishes.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import subprocess
+
+from jarvis.config import config
+
+logger = logging.getLogger("jarvis.browser")
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_lock = asyncio.Lock()  # one browser task at a time (they share the Chrome profile)
+
+
+def _chrome_running() -> bool:
+    try:
+        return subprocess.run(["pgrep", "-x", "Google Chrome"], capture_output=True).returncode == 0
+    except Exception:
+        return False
+
+
+# Cache dirs (the bulk of a profile) we skip when cloning — not needed for logins.
+_CLONE_EXCLUDES = [
+    "*Cache*/", "*/Service Worker/CacheStorage/", "*/Service Worker/ScriptCache/",
+    "*/GPUCache/", "*/DawnCache/", "*/GrShaderCache/", "ShaderCache/", "GraphiteDawnCache/",
+    "Crashpad/", "Safe Browsing/", "*.log", "Singleton*", "component_crx_cache/", "extensions_crx_cache/",
+]
+
+
+def _clone_profile() -> str:
+    """rsync the live Chrome profile (cookies/logins, minus caches) into JARVIS's own
+    user-data-dir so a headless Chrome can use it WITHOUT touching the running one.
+    Incremental after the first run. Returns the clone user-data-dir."""
+    src = config.browser_user_data_dir.rstrip("/")
+    dst = config.browser_clone_dir
+    os.makedirs(dst, exist_ok=True)
+    cmd = ["rsync", "-a", "--delete"]
+    for e in _CLONE_EXCLUDES:
+        cmd += ["--exclude", e]
+    cmd += [src + "/", dst + "/"]
+    subprocess.run(cmd, capture_output=True, timeout=180)
+    return dst
+
+
+def _effective_profile() -> tuple[str, bool, str | None]:
+    """Return (user_data_dir, headless, blocker). blocker is a spoken message when we
+    can't proceed (e.g. Chrome open and cloning disabled)."""
+    mode = (config.browser_clone_profile or "auto").lower()
+    running = _chrome_running()
+    if mode == "always" or (mode == "auto" and running):
+        return _clone_profile(), True, None  # headless clone, runs alongside Chrome
+    if running:  # mode == never (or auto but... running handled above) and Chrome open
+        return config.browser_user_data_dir, config.browser_headless, \
+            "Sir, please close Google Chrome first so I can take over the browser."
+    return config.browser_user_data_dir, config.browser_headless, None
+
+
+def _ollama_host() -> str:
+    return config.ollama_base_url.rstrip("/").removesuffix("/v1").rstrip("/")
+
+
+def _job(instruction: str, files=None, frontier_only: bool = False,
+         user_data_dir: str | None = None, headless: bool | None = None) -> dict:
+    return {
+        "task": instruction,
+        "chrome_path": config.browser_chrome_path,
+        "user_data_dir": user_data_dir or config.browser_user_data_dir,
+        "profile_directory": config.browser_profile_dir,
+        "downloads_dir": config.browser_downloads,
+        "headless": headless if headless is not None else config.browser_headless,
+        "local_model": "" if frontier_only else (config.browser_local_model if config.browser_use_local else ""),
+        "local_max_steps": config.browser_local_max_steps,
+        "frontier_model": config.browser_frontier_model,
+        "ollama_host": _ollama_host(),
+        "openai_api_key": config.openai_api_key,
+        "max_steps": config.browser_max_steps,
+        "available_file_paths": files or [],
+        "captcha_model": config.captcha_model if config.captcha_enabled else "",
+    }
+
+
+async def _run_job(instruction: str, *, files=None, frontier_only: bool, timeout: int) -> dict:
+    """Pick the effective profile (cloning if Chrome is open), then run the job."""
+    udd, headless, blocker = await asyncio.to_thread(_effective_profile)
+    if blocker:
+        return {"ok": False, "result": "", "error": blocker}
+    job = _job(instruction, files=files, frontier_only=frontier_only,
+               user_data_dir=udd, headless=headless)
+    return await _spawn(job, timeout)
+
+
+async def run_task_sync(instruction: str, *, files=None, timeout: int | None = None) -> dict:
+    """Run a browser task and RETURN its result dict (no fire-and-report).
+
+    Used by higher-level flows (download an assignment, drive claude.ai to answer)
+    that need the outcome to continue. Serialised via the same single-flight lock.
+    """
+    async with _lock:
+        return await _run_job(instruction, files=files, frontier_only=True,
+                              timeout=timeout or config.browser_timeout)
+
+
+async def run_browser_task(instruction: str, *, announce=None) -> str:
+    """Spoken ack now; the browser task runs in the background and is announced when done."""
+    if not config.browser_agent_enabled:
+        return "the browser agent isn't enabled, sir"
+    if _lock.locked():
+        return "I'm still on the last browser task, sir — one moment"
+    asyncio.create_task(_run_and_report(instruction, announce))
+    return "On it, sir — I'll let you know when it's done."
+
+
+async def _run_and_report(instruction: str, announce) -> None:
+    async with _lock:
+        result = await _execute(instruction)
+    if announce is not None:
+        await announce(result)
+    else:
+        logger.info("browser result: %s", result)
+
+
+def _preflight() -> str | None:
+    """Return a spoken reason we can't run, or None if good to go."""
+    py = os.path.join(config.browser_venv, "bin", "python")
+    if not os.path.exists(os.path.join(_REPO_ROOT, py)) and not os.path.isabs(py):
+        return "the browser agent isn't set up, sir — run scripts/setup_browser_agent.sh first"
+    if not config.openai_api_key:
+        return "I need an OpenAI key for the browser agent, sir — set OPENAI_API_KEY"
+    return None
+
+
+async def _spawn(job: dict, timeout: int) -> dict:
+    """Run the isolated runner subprocess; return its parsed result dict."""
+    err = _preflight()
+    if err:
+        return {"ok": False, "result": "", "error": err}
+    py = os.path.join(config.browser_venv, "bin", "python")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            py, "-m", "jarvis.browser_agent.runner",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=_REPO_ROOT,
+        )
+    except OSError as e:
+        return {"ok": False, "result": "", "error": f"couldn't start browser agent: {e}"}
+    try:
+        out, err_b = await asyncio.wait_for(proc.communicate(json.dumps(job).encode()), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return {"ok": False, "result": "", "error": "the browser task took too long and I stopped it"}
+    lines = [ln for ln in (out or b"").decode(errors="replace").splitlines() if ln.strip()]
+    if not lines:
+        tail = (err_b or b"").decode(errors="replace").strip().splitlines()[-1:] or [""]
+        return {"ok": False, "result": "", "error": f"no output ({tail[0][:80]})"}
+    try:
+        return json.loads(lines[-1])
+    except json.JSONDecodeError:
+        return {"ok": False, "result": "", "error": "unreadable result"}
+
+
+async def _execute(instruction: str) -> str:
+    res = await _run_job(instruction, frontier_only=False, timeout=config.browser_timeout)
+    if res.get("result"):
+        return res["result"]
+    if res.get("error"):
+        # preflight messages are already user-facing; wrap raw errors.
+        e = res["error"]
+        return e if e[0:1].isupper() or e.startswith(("the ", "I ")) else f"Sorry sir, the browser task failed: {e}"
+    return "The browser task finished, sir, but produced no result."
