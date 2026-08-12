@@ -198,8 +198,11 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
             memory.log_turn(text)  # distilled into the durable profile in the background
         if role == "assistant":
             userdata.activation.note_reply(text)
-        if convlog is not None and role in ("user", "assistant") and text:
-            convlog.add(role, text)  # persistent transcript for the HUD
+        if role in ("user", "assistant") and text:
+            if convlog is not None:
+                convlog.add(role, text)  # persistent transcript for the HUD
+            if ui is not None:
+                ui.add_turn(role, text)  # live Q&A feed in the Analysis panel
 
     announcer.session = session
     if scheduler is not None:

@@ -170,19 +170,58 @@ $("alarm-done").addEventListener("click", () => {
   hideAlarm();
 });
 
-// ── explanation (the key feature) ───────────────────────────────────────────
-let typeToken = 0;
-function showExplanation(e) {
+// ── live Q&A + analysis feed (every question + answer + screen analysis) ─────
+let typeToken = 0, feedSeen = 0, feedCount = 0;
+function feedEl() { return $("feed"); }
+function scrollFeed() { const f = feedEl(); f.scrollTop = f.scrollHeight; }
+function bumpCount() { $("feed-count").textContent = ++feedCount; }
+
+function addQA(entry) {
   $("analysis-idle").classList.add("hidden");
-  $("analysis-title").textContent = (e.title || "ANALYSIS").toUpperCase();
-  const img = $("analysis-image");
-  if (e.image) { img.src = `data:image/png;base64,${e.image}`; img.classList.remove("hidden"); }
-  else { img.classList.add("hidden"); img.removeAttribute("src"); }
-  $("analysis-src").textContent = e.source ? `— ${e.source}` : "";
-  $("panel-analysis").classList.remove("flash"); void $("panel-analysis").offsetWidth;
-  $("panel-analysis").classList.add("flash");
-  typeText($("analysis-text"), e.body || "");
+  const div = document.createElement("div");
+  div.className = `qa ${entry.role === "user" ? "user" : "assistant"}`;
+  const who = entry.role === "user" ? "YOU" : "JARVIS";
+  div.innerHTML = `<span class="who">${who}</span>${escapeHtml(entry.text || "")}`;
+  feedEl().appendChild(div);
+  bumpCount(); scrollFeed();
 }
+
+function addExplanation(entry, animate) {
+  $("analysis-idle").classList.add("hidden");
+  const card = document.createElement("div");
+  card.className = "expl" + (animate ? " flash" : "");
+  const img = entry.image
+    ? `<img src="data:image/png;base64,${entry.image}" alt="captured screen" />` : "";
+  card.innerHTML =
+    `<div class="etitle">${escapeHtml(entry.title || "Analysis")}</div>${img}` +
+    `<div class="etext"></div>` +
+    (entry.source ? `<div class="esrc">— ${escapeHtml(entry.source)}</div>` : "");
+  feedEl().appendChild(card);
+  bumpCount();
+  const textEl = card.querySelector(".etext");
+  if (animate) typeText(textEl, entry.text || "");
+  else { textEl.textContent = entry.text || ""; }
+  scrollFeed();
+}
+
+function appendFeedEntry(entry, animate) {
+  if (!entry || (entry.fid && entry.fid <= feedSeen)) return;
+  if (entry.fid) feedSeen = entry.fid;
+  if (entry.kind === "explanation") addExplanation(entry, animate);
+  else addQA(entry);
+}
+
+function syncFeed(state) {
+  // append only entries we haven't shown yet (fid guard) — no flicker on the
+  // periodic snapshot; live "feed" events keep it current between snapshots.
+  (state.feed || []).forEach(e => appendFeedEntry(e, false));
+}
+function resetFeed() {
+  [...feedEl().querySelectorAll(".qa, .expl")].forEach(n => n.remove());
+  feedSeen = 0; feedCount = 0; $("feed-count").textContent = 0;
+  $("analysis-idle").classList.remove("hidden");
+}
+
 function typeText(el, text) {
   const my = ++typeToken;
   el.textContent = "";
@@ -194,7 +233,7 @@ function typeText(el, text) {
       cur.remove();
       el.textContent = text.slice(0, i);
       el.appendChild(cur);
-      el.parentElement.scrollTop = el.parentElement.scrollHeight;
+      scrollFeed();
       i += Math.max(1, Math.round(text.length / 240));
       setTimeout(step, 12);
     } else { cur.remove(); }
@@ -217,12 +256,15 @@ function navigate(ev) {
 }
 
 // ── event application ────────────────────────────────────────────────────────
-let pendingExpl = null;
+const pendingFeed = [];
 function applyEvent(ev) {
   switch (ev.type) {
     case "reveal": revealPending = true; maybeReveal(lastState); break;
     case "hide": break; // the parent window is closed by voice; page stays loaded
-    case "explanation": if (booted) showExplanation(ev); else { revealPending = true; pendingExpl = ev; } break;
+    case "feed":
+      if (booted) appendFeedEntry(ev.entry, true);
+      else { revealPending = true; pendingFeed.push(ev.entry); }
+      break;
     case "navigate": if (booted) navigate(ev); break;
     case "alarm": revealPending = true; maybeReveal(lastState); showAlarm(ev.alarm); break;
     case "alarm_cleared": hideAlarm(); break;
@@ -234,8 +276,8 @@ async function maybeReveal(state) {
   if (booted) return;
   if (!(state && (state.revealed || revealPending))) return;
   await reveal(state.user);
-  if (pendingExpl) { showExplanation(pendingExpl); pendingExpl = null; }
-  else if (state && state.last_explanation) showExplanation(state.last_explanation);
+  if (state) syncFeed(state);
+  while (pendingFeed.length) appendFeedEntry(pendingFeed.shift(), false);
 }
 
 function applySnapshot(state) {
@@ -244,6 +286,7 @@ function applySnapshot(state) {
   renderConversations(state);
   renderTodos(state);
   renderAgenda(state);
+  if (booted) syncFeed(state);
   cursor = state.cursor || cursor;
   // a late-joining client should still see a currently ringing alarm
   if (booted && (state.alarms || []).length && !currentAlarm) showAlarm(state.alarms[0]);
@@ -257,7 +300,7 @@ function connect() {
   try {
     ws = new WebSocket(`ws://${location.host}/ws`);
   } catch (_) { setTimeout(connect, backoff); return; }
-  ws.onopen = () => { backoff = 400; };
+  ws.onopen = () => { backoff = 400; if (booted) resetFeed(); };  // rebuild cleanly from the fresh snapshot
   ws.onmessage = (m) => {
     let msg; try { msg = JSON.parse(m.data); } catch { return; }
     if (msg.type === "snapshot") applySnapshot(msg.state);

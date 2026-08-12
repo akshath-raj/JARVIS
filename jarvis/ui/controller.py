@@ -11,7 +11,6 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from typing import Optional
 
 
 class UIController:
@@ -24,8 +23,12 @@ class UIController:
         self._events: deque[dict] = deque(maxlen=200)
         self._seq = 0
         self._revealed = False
-        # the most recent explanation, so a client that connects late still sees it
-        self._last_explanation: Optional[dict] = None
+        # the running conversation + analysis feed shown in the centre panel:
+        # every question the user asks, every answer JARVIS gives, and any screen
+        # analyses (with their image). Late-joining clients get it from the snapshot.
+        self._feed: deque[dict] = deque(maxlen=300)
+        self._feed_seq = 0
+        self._last_expl_body = ""  # to dedupe the spoken answer vs its explanation entry
         self._alarms: dict = {}  # id -> currently ringing alarm (shown as a popup)
         # optional push hook — the WebSocket server registers this to deliver an
         # event to connected browsers the instant it's emitted (no polling).
@@ -75,22 +78,38 @@ class UIController:
             self._revealed = False
         self._emit({"type": "hide"})
 
+    def _add_feed(self, entry: dict) -> None:
+        with self._lock:
+            self._feed_seq += 1
+            entry = {**entry, "fid": self._feed_seq, "ts": time.time()}
+            self._feed.append(entry)
+        self._emit({"type": "feed", "entry": entry})
+
+    def add_turn(self, role: str, text: str) -> None:
+        """Add a spoken turn (the user's question or JARVIS's answer) to the feed."""
+        text = (text or "").strip()
+        if role not in ("user", "assistant") or not text:
+            return
+        # an answer that just relayed a screen analysis is already in the feed as
+        # its explanation entry — don't show it twice.
+        if role == "assistant" and text == self._last_expl_body.strip():
+            return
+        self._add_feed({"kind": "qa", "role": role, "text": text})
+
     def show_explanation(
         self, *, title: str, body: str, image_b64: str = "", source: str = ""
     ) -> None:
-        """Render an explanation/analysis in the main HUD panel (the key feature —
-        e.g. a screenshot's detailed GPT reading). Reveals the HUD if hidden."""
-        expl = {
-            "type": "explanation",
-            "title": title or "Analysis",
-            "body": body or "",
-            "image": image_b64 or "",
-            "source": source or "",
-        }
+        """Render an explanation/analysis in the feed (the key feature — e.g. a
+        screenshot's detailed GPT reading, with the captured image). Reveals the
+        HUD if hidden."""
         with self._lock:
             self._revealed = True
-            self._last_explanation = expl
-        self._emit(expl)
+            self._last_expl_body = (body or "").strip()
+        self._add_feed({
+            "kind": "explanation", "role": "assistant",
+            "title": title or "Analysis", "text": body or "",
+            "image": image_b64 or "", "source": source or "",
+        })
 
     def navigate(self, section: str, item_id=None) -> None:
         """Direct the user to a section (about / memories / conversations) and,
@@ -159,7 +178,7 @@ class UIController:
             revealed = self._revealed
             events = [e for e in self._events if e["id"] > since]
             cursor = self._seq
-            last_expl = self._last_explanation
+            feed = list(self._feed)
             alarms = list(self._alarms.values())
         about = self._about()
         tasks = self._tasks_data()
@@ -173,6 +192,6 @@ class UIController:
             "todos": tasks["todos"],
             "agenda": tasks["agenda"],
             "alarms": alarms,
-            "last_explanation": last_expl,
+            "feed": feed,
             "events": events,
         }

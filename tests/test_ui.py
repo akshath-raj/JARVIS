@@ -48,13 +48,30 @@ def test_reveal_and_events_are_incremental(tmp_path):
     cursor = st1["cursor"]
     # nothing new since cursor
     assert ui.state(cursor)["events"] == []
-    # a new explanation shows up only after the cursor
+    # a new explanation shows up only after the cursor, as a feed entry with image
     ui.show_explanation(title="Formula", body="x = -b/2a", image_b64="AAAA", source="vision")
     st2 = ui.state(cursor)
-    assert [e["type"] for e in st2["events"]] == ["explanation"]
-    e = st2["events"][0]
-    assert e["title"] == "Formula" and e["image"] == "AAAA"
-    assert st2["last_explanation"]["body"] == "x = -b/2a"
+    assert [e["type"] for e in st2["events"]] == ["feed"]
+    entry = st2["events"][0]["entry"]
+    assert entry["kind"] == "explanation" and entry["title"] == "Formula" and entry["image"] == "AAAA"
+    assert st2["feed"][-1]["text"] == "x = -b/2a"
+
+
+def test_qa_turns_build_the_feed_and_dedupe_explanation(tmp_path):
+    ui = _ctrl(tmp_path)
+    ui.add_turn("user", "what's the capital of France?")
+    ui.add_turn("assistant", "Paris, sir.")
+    ui.add_turn("bogus", "ignored")     # non user/assistant dropped
+    feed = ui.state(0)["feed"]
+    assert [(f["kind"], f.get("role"), f["text"]) for f in feed] == [
+        ("qa", "user", "what's the capital of France?"),
+        ("qa", "assistant", "Paris, sir."),
+    ]
+    # an answer that merely relays a screen analysis isn't duplicated in the feed
+    ui.show_explanation(title="Screen", body="You are looking at VS Code.")
+    ui.add_turn("assistant", "You are looking at VS Code.")   # same as the explanation
+    kinds = [f["kind"] for f in ui.state(0)["feed"]]
+    assert kinds == ["qa", "qa", "explanation"]   # no extra qa entry for the relay
 
 
 def test_notifier_fires_on_each_event(tmp_path):
@@ -62,9 +79,9 @@ def test_notifier_fires_on_each_event(tmp_path):
     seen = []
     ui.set_notifier(lambda ev: seen.append(ev["type"]))
     ui.reveal()
-    ui.show_explanation(title="t", body="b")
+    ui.show_explanation(title="t", body="b")   # emitted as a feed entry now
     ui.navigate("about")
-    assert seen == ["reveal", "explanation", "navigate"]
+    assert seen == ["reveal", "feed", "navigate"]
 
 
 def test_navigate_reveals_and_emits(tmp_path):
