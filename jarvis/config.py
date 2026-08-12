@@ -89,8 +89,25 @@ class Config:
 
     # ── Orchestrator / brain ───────────────────────────────────────────
     # "langgraph" (default): LangGraph react-agent brain + persistent memory.
+    # "openai": OpenAI Agents SDK — a triage agent that HANDS OFF to specialist
+    #           agents (Music / Browser / Screen), all running on a frontier model.
+    #           This is the "cloud brain" with full feature parity + screen vision.
     # "native": the previous hand-rolled LiveKit supervisor (fallback / rollback).
     orchestrator: str = os.getenv("JARVIS_ORCHESTRATOR", "langgraph")
+    # Frontier model the OpenAI Agents SDK brain (triage + specialists) runs on.
+    # gpt-4.1-mini is a reliable, cheap tool-caller that handles handoffs well.
+    cloud_agent_model: str = os.getenv("JARVIS_CLOUD_AGENT_MODEL", "gpt-4.1-mini")
+    # Vision model used to look at a screenshot and explain what's on screen.
+    # gpt-4o gives detailed, accurate reads of arbitrary screen content.
+    vision_model: str = os.getenv("JARVIS_VISION_MODEL", "gpt-4o")
+
+    # ── HUD dashboard UI (hidden; appears on voice command) ─────────────
+    # A local Iron-Man-style dashboard JARVIS reveals when you ask. It shows your
+    # profile/memories/past conversations and renders explanations (e.g. a screen
+    # analysis) on screen. Served locally; nothing leaves the machine.
+    ui_enabled: bool = _truthy(os.getenv("JARVIS_UI", "1"))
+    ui_port: int = int(os.getenv("JARVIS_UI_PORT", "8137"))
+    ui_user: str = os.getenv("JARVIS_UI_USER", "Akshath")
     # Local embedding model (kept for optional future use; memory no longer indexes).
     embed_model: str = os.getenv("JARVIS_EMBED_MODEL", "nomic-embed-text")
     embed_dims: int = int(os.getenv("JARVIS_EMBED_DIMS", "768"))  # nomic-embed-text = 768

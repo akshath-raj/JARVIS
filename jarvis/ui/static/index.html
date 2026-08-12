@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>J.A.R.V.I.S.</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div id="grid-bg"></div>
+  <div id="scanlines"></div>
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+
+  <!-- BOOT / WELCOME sequence -->
+  <section id="boot" class="screen">
+    <div class="reactor big" aria-hidden="true">
+      <div class="ring r1"></div><div class="ring r2"></div>
+      <div class="ring r3"></div><div class="core"></div>
+    </div>
+    <div class="boot-log" id="bootlog"></div>
+    <h1 id="welcome" class="welcome"></h1>
+  </section>
+
+  <!-- MAIN HUD -->
+  <main id="hud" class="screen hidden">
+    <header class="topbar">
+      <div class="brand">
+        <div class="reactor small"><div class="ring r1"></div><div class="ring r2"></div><div class="core"></div></div>
+        <div class="titles">
+          <div class="jtitle">J.A.R.V.I.S.</div>
+          <div class="jsub">Just A Rather Very Intelligent System</div>
+        </div>
+      </div>
+      <div class="status">
+        <span class="dot"></span> ONLINE
+        <span class="clock" id="clock">--:--:--</span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <!-- LEFT: profile + memories -->
+      <aside class="col left">
+        <section class="panel" id="panel-about" data-section="about">
+          <div class="panel-h"><span>USER PROFILE</span><span class="hx"></span></div>
+          <div class="user-card">
+            <div class="avatar"><div class="ring r1"></div><span id="user-initial">A</span></div>
+            <div>
+              <div class="uname" id="user-name">—</div>
+              <div class="urole">Primary user · full access</div>
+            </div>
+          </div>
+        </section>
+        <section class="panel grow" id="panel-memories" data-section="memories">
+          <div class="panel-h"><span>MEMORY BANK</span><span class="count" id="mem-count">0</span></div>
+          <ul class="mem-list" id="mem-list"></ul>
+        </section>
+      </aside>
+
+      <!-- CENTER: analysis / explanation -->
+      <section class="col center panel" id="panel-analysis" data-section="analysis">
+        <div class="panel-h"><span id="analysis-title">ANALYSIS</span><span class="hx"></span></div>
+        <div class="analysis-body" id="analysis-body">
+          <div class="idle" id="analysis-idle">
+            <div class="reactor mid"><div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div><div class="core"></div></div>
+            <p>Standing by, sir. Ask me to analyse your screen and I'll render it here.</p>
+          </div>
+          <img id="analysis-image" class="hidden" alt="captured screen" />
+          <div id="analysis-text" class="analysis-text"></div>
+          <div class="analysis-src" id="analysis-src"></div>
+        </div>
+      </section>
+
+      <!-- RIGHT: conversations -->
+      <aside class="col right">
+        <section class="panel grow" id="panel-conversations" data-section="conversations">
+          <div class="panel-h"><span>CONVERSATION LOG</span><span class="count" id="conv-count">0</span></div>
+          <ul class="conv-list" id="conv-list"></ul>
+        </section>
+      </aside>
+    </div>
+    <footer class="ticker"><span id="ticker-text">SYSTEMS NOMINAL · VOICE INTERFACE ACTIVE · MEMORY SYNC OK</span></footer>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

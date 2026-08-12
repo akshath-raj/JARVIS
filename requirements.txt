@@ -18,6 +18,11 @@ langchain-core>=1.0
 langchain-ollama>=1.0
 livekit-plugins-langchain~=1.6
 
+# --- OpenAI Agents SDK cloud brain (JARVIS_ORCHESTRATOR=openai) ---
+# Triage + handoffs to Music/Browser/Screen specialists, plus screen vision.
+# Additive — keeps openai 2.x / pydantic 2.x (no LiveKit-stack conflict).
+openai-agents>=0.20
+
 # --- Documents (parse + assemble assignment files) ---
 pypdf>=5.0
 python-docx>=1.1
