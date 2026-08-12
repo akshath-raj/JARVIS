@@ -108,6 +108,13 @@ class Config:
     ui_enabled: bool = _truthy(os.getenv("JARVIS_UI", "1"))
     ui_port: int = int(os.getenv("JARVIS_UI_PORT", "8137"))
     ui_user: str = os.getenv("JARVIS_UI_USER", "Akshath")
+
+    # ── Calendar / to-dos / reminders + alarms ─────────────────────────
+    # Time-aware planning: JARVIS can set reminders that ring an alarm, keep a
+    # to-do list, and manage a calendar/agenda (shown on the HUD).
+    scheduler_enabled: bool = _truthy(os.getenv("JARVIS_SCHEDULER", "1"))
+    # macOS system sound looped as the alarm (empty = default Sosumi).
+    alarm_sound: str = os.getenv("JARVIS_ALARM_SOUND", "")
     # Local embedding model (kept for optional future use; memory no longer indexes).
     embed_model: str = os.getenv("JARVIS_EMBED_MODEL", "nomic-embed-text")
     embed_dims: int = int(os.getenv("JARVIS_EMBED_DIMS", "768"))  # nomic-embed-text = 768

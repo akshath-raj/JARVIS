@@ -395,6 +395,124 @@ def build_screen_tools(*, screen: ScreenController, memory, ui=None) -> list:
     return [explain_screen, take_screenshot]
 
 
+# ── Planner: calendar / to-dos / reminders + alarms ─────────────────────────
+def build_planner_tools(*, scheduler, memory=None) -> list:
+    from jarvis.scheduler.scheduler import _fmt as fmt_time
+
+    store = scheduler.store
+
+    @function_tool
+    async def add_todo(task: str) -> str:
+        """Add an item to the user's to-do list. Use for "add X to my to-do list",
+        "I need to do X", "put X on my list" (with NO specific time — if they give a
+        time to be reminded, use add_reminder instead)."""
+        store.add_todo(task)
+        return f"Added to your to-do list: {task}."
+
+    @function_tool
+    async def list_todos() -> str:
+        """List the user's outstanding to-do items."""
+        todos = store.list_todos()
+        if not todos:
+            return "Your to-do list is empty, sir."
+        return f"You have {len(todos)} to-do(s): " + "; ".join(t["text"] for t in todos)
+
+    @function_tool
+    async def complete_todo(task: str) -> str:
+        """Mark a to-do as done / completed. Use when the user says "I'm done with
+        X", "I finished X", "cross off X", "mark X complete". Also stops any alarm
+        still ringing for that item."""
+        done = store.complete_todo(task)
+        # silence a ringing alarm for this item and cancel any pending reminder so
+        # it won't fire later.
+        for a in scheduler.active_alarms:
+            if task.lower() in a.get("text", "").lower() or a.get("text", "").lower() in task.lower():
+                scheduler.dismiss(a["id"])
+        store.cancel_reminder(task)
+        if not done:
+            return f"I couldn't find '{task}' on your list, sir."
+        return f"Done — I've crossed '{done['text']}' off your list, sir."
+
+    @function_tool
+    async def remove_todo(task: str) -> str:
+        """Remove/delete a to-do item without completing it."""
+        rem = store.remove_todo(task)
+        return f"Removed '{rem['text']}' from your list." if rem else f"'{task}' isn't on your list, sir."
+
+    @function_tool
+    async def add_reminder(task: str, when: str) -> str:
+        """Set a time-based reminder that RINGS AN ALARM at the given time. Use for
+        "remind me to X at 9pm", "remind me to X in an hour", "remind me in 30
+        minutes to X". Pass the thing to be reminded of as `task`, and the timing as
+        `when`. `when` may be an absolute time you've computed from the current time
+        as an ISO 8601 datetime (preferred, e.g. '2026-08-12T21:00:00'), or a natural
+        phrase like 'at 9pm today' / 'in 1 hour' / 'tomorrow at 8am'."""
+        res = await asyncio.to_thread(scheduler.add_reminder, task, when)
+        if memory is not None and res.startswith("Reminder set"):
+            memory.log_activity(f"set a reminder: {task}")
+        return res
+
+    @function_tool
+    async def list_reminders() -> str:
+        """List the user's upcoming (not-yet-fired) reminders."""
+        rs = store.list_reminders()
+        if not rs:
+            return "You have no upcoming reminders, sir."
+        return f"{len(rs)} reminder(s): " + "; ".join(f"{r['text']} at {fmt_time(r['due'])}" for r in rs)
+
+    @function_tool
+    async def cancel_reminder(task: str) -> str:
+        """Cancel an upcoming reminder before it fires."""
+        r = store.cancel_reminder(task)
+        return f"Cancelled the reminder for '{r['text']}'." if r else f"No pending reminder matches '{task}', sir."
+
+    @function_tool
+    async def add_calendar_event(title: str, when: str) -> str:
+        """Add an event to the user's calendar/agenda. Use for "add X to my
+        calendar", "schedule X for tomorrow at 3pm", "I have a meeting at ...".
+        `when` is an ISO 8601 datetime you computed, or a natural phrase."""
+        return await asyncio.to_thread(scheduler.add_event, title, when)
+
+    @function_tool
+    async def list_calendar_events() -> str:
+        """List the user's upcoming calendar events."""
+        evs = store.list_events()
+        if not evs:
+            return "Your calendar is clear, sir."
+        return f"{len(evs)} event(s): " + "; ".join(f"{e['title']} at {fmt_time(e['start'])}" for e in evs)
+
+    @function_tool
+    async def cancel_calendar_event(title: str) -> str:
+        """Remove/cancel a calendar event."""
+        e = store.remove_event(title)
+        return f"Removed '{e['title']}' from your calendar." if e else f"No event matches '{title}', sir."
+
+    @function_tool
+    async def stop_alarm() -> str:
+        """Stop / silence / dismiss a currently ringing reminder alarm. Use when the
+        user says "stop the alarm", "turn it off", "dismiss", "I'm done" while an
+        alarm is ringing."""
+        if not scheduler.active_alarms:
+            return "There's no alarm ringing, sir."
+        dismissed = scheduler.dismiss()
+        return "Alarm dismissed, sir." + (f" Shall I mark '{dismissed['text']}' as done?" if dismissed else "")
+
+    @function_tool
+    async def current_time() -> str:
+        """Tell the current date and time. Use for "what time is it", "what's the
+        date"."""
+        import datetime
+        now = datetime.datetime.now()
+        return now.strftime("It's %-I:%M %p on %A, %-d %B %Y, sir.")
+
+    return [
+        add_todo, list_todos, complete_todo, remove_todo,
+        add_reminder, list_reminders, cancel_reminder,
+        add_calendar_event, list_calendar_events, cancel_calendar_event,
+        stop_alarm, current_time,
+    ]
+
+
 # ── HUD dashboard (hidden UI, voice-summoned) ───────────────────────────────
 def build_ui_tools(*, ui, open_cb=None) -> list:
     @function_tool

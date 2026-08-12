@@ -107,6 +107,69 @@ function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
 }
 
+// ── to-dos + agenda ──────────────────────────────────────────────────────────
+let lastTodoSig = "", lastAgendaSig = "";
+function renderTodos(state) {
+  const todos = state.todos || [];
+  const sig = JSON.stringify(todos.map(t => t.id));
+  if (sig === lastTodoSig) return;
+  lastTodoSig = sig;
+  const list = $("todo-list"); list.innerHTML = "";
+  $("todo-count").textContent = todos.length;
+  if (!todos.length) { list.innerHTML = `<li class="empty">Nothing to do, sir.</li>`; return; }
+  todos.forEach((t, i) => {
+    const li = document.createElement("li");
+    li.style.animationDelay = `${i * 0.05}s`;
+    li.innerHTML = `<span class="box"></span><span>${escapeHtml(t.text)}</span>`;
+    list.appendChild(li);
+  });
+}
+function fmtAgendaWhen(ts) {
+  try {
+    const d = new Date(ts * 1000), now = new Date();
+    const t = d.toLocaleTimeString("en-GB", { hour:"2-digit", minute:"2-digit" });
+    if (d.toDateString() === now.toDateString()) return t;
+    const tm = new Date(now); tm.setDate(now.getDate() + 1);
+    if (d.toDateString() === tm.toDateString()) return `tmrw ${t}`;
+    return d.toLocaleDateString("en-GB", { day:"2-digit", month:"short" }) + ` ${t}`;
+  } catch { return ""; }
+}
+function renderAgenda(state) {
+  const items = state.agenda || [];
+  const sig = JSON.stringify(items.map(x => [x.id, x.kind]));
+  if (sig === lastAgendaSig) return;
+  lastAgendaSig = sig;
+  const list = $("agenda-list"); list.innerHTML = "";
+  $("agenda-count").textContent = items.length;
+  if (!items.length) { list.innerHTML = `<li class="empty">Your schedule is clear.</li>`; return; }
+  items.forEach((x, i) => {
+    const li = document.createElement("li");
+    li.className = x.kind === "reminder" ? "reminder" : "";
+    li.style.animationDelay = `${i * 0.05}s`;
+    const icon = x.kind === "reminder" ? "⏰" : "📅";
+    li.innerHTML = `<span class="icon">${icon}</span><span>${escapeHtml(x.title)}</span><span class="when">${fmtAgendaWhen(x.start)}</span>`;
+    list.appendChild(li);
+  });
+}
+
+// ── alarm overlay ────────────────────────────────────────────────────────────
+let currentAlarm = null;
+function showAlarm(alarm) {
+  currentAlarm = alarm;
+  $("alarm-text").textContent = alarm.text || "Reminder";
+  $("alarm-time").textContent = alarm.due ? `set for ${fmtAgendaWhen(alarm.due)}` : "";
+  $("alarm").classList.remove("hidden");
+}
+function hideAlarm() { currentAlarm = null; $("alarm").classList.add("hidden"); }
+$("alarm-stop").addEventListener("click", () => {
+  if (currentAlarm) wsSend({ cmd: "dismiss_alarm", id: currentAlarm.id });
+  hideAlarm();
+});
+$("alarm-done").addEventListener("click", () => {
+  if (currentAlarm) wsSend({ cmd: "complete_todo", id: currentAlarm.id, text: currentAlarm.text });
+  hideAlarm();
+});
+
 // ── explanation (the key feature) ───────────────────────────────────────────
 let typeToken = 0;
 function showExplanation(e) {
@@ -161,6 +224,8 @@ function applyEvent(ev) {
     case "hide": break; // the parent window is closed by voice; page stays loaded
     case "explanation": if (booted) showExplanation(ev); else { revealPending = true; pendingExpl = ev; } break;
     case "navigate": if (booted) navigate(ev); break;
+    case "alarm": revealPending = true; maybeReveal(lastState); showAlarm(ev.alarm); break;
+    case "alarm_cleared": hideAlarm(); break;
   }
 }
 
@@ -177,12 +242,17 @@ function applySnapshot(state) {
   lastState = state;
   renderProfile(state);
   renderConversations(state);
+  renderTodos(state);
+  renderAgenda(state);
   cursor = state.cursor || cursor;
+  // a late-joining client should still see a currently ringing alarm
+  if (booted && (state.alarms || []).length && !currentAlarm) showAlarm(state.alarms[0]);
   maybeReveal(state);
 }
 
 // ── WebSocket transport (instant push, with reconnect) ───────────────────────
 let ws = null, backoff = 400;
+function wsSend(obj) { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); } catch (_) {} }
 function connect() {
   try {
     ws = new WebSocket(`ws://${location.host}/ws`);

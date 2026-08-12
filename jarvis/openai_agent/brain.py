@@ -30,6 +30,7 @@ from jarvis.graph.memory import MemoryStore
 from jarvis.openai_agent.tools import (
     build_browser_tools,
     build_music_tools,
+    build_planner_tools,
     build_screen_tools,
     build_triage_tools,
     build_ui_tools,
@@ -68,7 +69,10 @@ _ROUTING = (
     "the tab), run multi-step logged-in web tasks (downloading files, checking "
     "accounts like VTOP/AWS/Amazon), or work on documents/assignments. Hand off to "
     "the Screen agent ONLY to look at / read / explain what is CURRENTLY DISPLAYED "
-    "on the user's screen — never to control a video. Use web_search yourself only "
+    "on the user's screen — never to control a video. Hand off to the Planner agent "
+    "for the calendar, to-do list, and time-based reminders/alarms — 'remind me to X "
+    "at 9pm / in an hour', 'add X to my to-do list', 'I'm done with X', 'what's on my "
+    "calendar', 'stop the alarm', or 'what time is it'. Use web_search yourself only "
     "when the answer depends on current/live info (news, prices, weather, scores). "
     "recall_about_me is ONLY for personal facts you've stored about the user — never "
     "their listening history (that's the Music agent's recently_played). Use "
@@ -84,12 +88,14 @@ _ROUTING = (
 
 
 def _date_note() -> str:
-    t = datetime.date.today()
+    now = datetime.datetime.now()
     return (
-        f" Today's actual date is {t:%A}, {t.day} {t:%B} {t.year}. Your training "
-        "knowledge is out of date, so for anything time-sensitive trust tool results, "
-        "not your memory, and assume the present year; do not add a year to a web "
-        "search unless the user said one."
+        f" The current date and time is {now:%A, %-d %B %Y, %-I:%M %p}. Use this to "
+        "resolve relative times like 'in an hour', 'tonight', or '9pm today' — when "
+        "setting a reminder/event, compute the absolute time from now and pass it as "
+        "an ISO 8601 datetime. Your training knowledge is out of date, so for "
+        "anything time-sensitive trust tool results, not your memory, and assume the "
+        "present year; do not add a year to a web search unless the user said one."
     )
 
 
@@ -101,7 +107,7 @@ def _triage_instructions(run_context, agent) -> str:
 
 def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
                 media=None, screen=None, announce=None, workspace=None,
-                ui=None, open_cb=None):
+                ui=None, open_cb=None, scheduler=None):
     """Return (triage_agent, memory). Dependencies are injectable for tests.
 
     `ui` (a UIController) enables the HUD dashboard tools; `open_cb` is called to
@@ -195,6 +201,30 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
         tools=build_screen_tools(screen=screen, memory=memory, ui=ui),
     )
 
+    handoffs = [music_agent, browser_agent, screen_agent]
+    if scheduler is not None:
+        planner_agent = Agent[BrainContext](
+            name="Planner",
+            handoff_description=(
+                "Manages the user's calendar, to-do list, and time-based reminders/"
+                "alarms; tells the time; stops a ringing alarm."
+            ),
+            instructions=(
+                _PERSONA + " You manage the user's time: to-dos, calendar events, and "
+                "reminders that ring an alarm. add_reminder for 'remind me to X at/in "
+                "…' (it rings an alarm at that time); add_todo for a task with no time; "
+                "add_calendar_event to schedule something; complete_todo when they say "
+                "they've finished something ('I'm done with X'); stop_alarm to silence a "
+                "ringing alarm. When setting a reminder or event, compute the absolute "
+                "time from the current time and pass it as an ISO 8601 datetime. Confirm "
+                "in one short sentence." + _date_note()
+            ),
+            model=model,
+            model_settings=settings,
+            tools=build_planner_tools(scheduler=scheduler, memory=memory),
+        )
+        handoffs.append(planner_agent)
+
     triage_tools = build_triage_tools(tavily=tavily, memory=memory)
     if ui is not None:
         triage_tools = triage_tools + build_ui_tools(ui=ui, open_cb=open_cb)
@@ -205,7 +235,7 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
         model=model,
         model_settings=settings,
         tools=triage_tools,
-        handoffs=[music_agent, browser_agent, screen_agent],
+        handoffs=handoffs,
     )
 
     logger.info(

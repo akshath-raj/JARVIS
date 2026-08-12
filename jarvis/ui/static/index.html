@@ -55,6 +55,10 @@
           <div class="panel-h"><span>MEMORY BANK</span><span class="count" id="mem-count">0</span></div>
           <ul class="mem-list" id="mem-list"></ul>
         </section>
+        <section class="panel grow" id="panel-todos" data-section="todos">
+          <div class="panel-h"><span>TO-DO LIST</span><span class="count" id="todo-count">0</span></div>
+          <ul class="todo-list" id="todo-list"></ul>
+        </section>
       </aside>
 
       <!-- CENTER: analysis / explanation -->
@@ -71,8 +75,12 @@
         </div>
       </section>
 
-      <!-- RIGHT: conversations -->
+      <!-- RIGHT: agenda + conversations -->
       <aside class="col right">
+        <section class="panel grow" id="panel-agenda" data-section="agenda">
+          <div class="panel-h"><span>AGENDA</span><span class="count" id="agenda-count">0</span></div>
+          <ul class="agenda-list" id="agenda-list"></ul>
+        </section>
         <section class="panel grow" id="panel-conversations" data-section="conversations">
           <div class="panel-h"><span>CONVERSATION LOG</span><span class="count" id="conv-count">0</span></div>
           <ul class="conv-list" id="conv-list"></ul>
@@ -81,6 +89,21 @@
     </div>
     <footer class="ticker"><span id="ticker-text">SYSTEMS NOMINAL · VOICE INTERFACE ACTIVE · MEMORY SYNC OK</span></footer>
   </main>
+
+  <!-- ALARM overlay -->
+  <div id="alarm" class="alarm-overlay hidden">
+    <div class="alarm-card">
+      <div class="reactor big alarm-reactor"><div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div><div class="core"></div></div>
+      <div class="alarm-label">⏰ REMINDER</div>
+      <div class="alarm-text" id="alarm-text"></div>
+      <div class="alarm-time" id="alarm-time"></div>
+      <div class="alarm-actions">
+        <button id="alarm-stop" class="abtn stop">STOP ALARM</button>
+        <button id="alarm-done" class="abtn done">MARK DONE</button>
+      </div>
+      <div class="alarm-hint">or say "Jarvis, stop the alarm" / "Jarvis, I'm done"</div>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
 </body>

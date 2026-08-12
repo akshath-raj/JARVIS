@@ -95,37 +95,66 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
     from jarvis.browser_agent.announcer import Announcer
     from jarvis.openai_agent import OpenAIAgentsLLM, build_brain, describe
 
+    import os
+
     logger.info("JARVIS starting — voice: %s | brain: %s", pipeline.describe(), describe())
     announcer = Announcer()  # background browser/document tasks speak their result
 
-    # ── HUD dashboard (hidden; revealed on voice command) ──────────────────
-    ui = convlog = None
-    if config.ui_enabled:
-        import os
+    # ── Calendar / to-dos / reminders (shared store, read by the HUD) ──────
+    tasks = None
+    if config.scheduler_enabled:
+        from jarvis.scheduler import TaskStore
 
+        tasks = TaskStore(os.path.join(config.memory_dir, "tasks.json"))
+
+    # ── HUD dashboard (hidden; revealed on voice command) ──────────────────
+    ui = convlog = open_cb = shared_memory = None
+    if config.ui_enabled:
+        from jarvis.graph.llm import chat_model
+        from jarvis.graph.memory import MemoryStore
         from jarvis.ui import ConversationLog, UIController, UIServer, open_dashboard, wait_until_up
 
         convlog = ConversationLog(os.path.join(config.memory_dir, "conversations.jsonl"))
-        # memory is created inside build_brain; make it here so the UI can read it too.
-        from jarvis.graph.llm import chat_model
-        from jarvis.graph.memory import MemoryStore
-
+        # memory is created here (not inside build_brain) so the UI reads the same one.
         shared_memory = MemoryStore(
             config.memory_dir,
             model=chat_model(config.extract_model, temperature=0.0),
             summarize_every=config.summarize_every,
         )
-        ui = UIController(user=config.ui_user, memory=shared_memory, conversations=convlog)
+        ui = UIController(user=config.ui_user, memory=shared_memory, conversations=convlog, tasks=tasks)
         server = UIServer(ui, port=config.ui_port)
         server.start()
 
-        def open_cb() -> None:
+        def _open_dashboard() -> None:
             wait_until_up(server.url)
             open_dashboard(server.url, chrome_path=config.browser_chrome_path)
 
-        brain, memory = build_brain(announce=announcer.announce, memory=shared_memory, ui=ui, open_cb=open_cb)
-    else:
-        brain, memory = build_brain(announce=announcer.announce)
+        open_cb = _open_dashboard
+
+    # ── Reminder/alarm scheduler (rings + pops up + speaks at due time) ────
+    scheduler = None
+    if config.scheduler_enabled:
+        from jarvis.scheduler import AlarmScheduler
+
+        scheduler = AlarmScheduler(
+            tasks, announce=announcer.announce, ui=ui,
+            sound=config.alarm_sound or None,
+        )
+        if ui is not None:
+            def _on_cmd(cmd: dict) -> None:
+                c = (cmd or {}).get("cmd")
+                if c == "dismiss_alarm":
+                    scheduler.dismiss(cmd.get("id"))
+                elif c == "complete_todo" and cmd.get("text"):
+                    tasks.complete_todo(cmd["text"])
+                    scheduler.dismiss(cmd.get("id"))
+
+            ui.set_command_handler(_on_cmd)
+
+    brain, memory = build_brain(
+        announce=announcer.announce, memory=shared_memory,
+        ui=ui, open_cb=open_cb, scheduler=scheduler,
+    )
 
     from jarvis.agents.graph_agent import GraphAgent
 
@@ -154,6 +183,8 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
             convlog.add(role, text)  # persistent transcript for the HUD
 
     announcer.session = session
+    if scheduler is not None:
+        scheduler.start()  # begin ticking reminders (fires alarms at due time)
     await session.start(agent=GraphAgent(), room=ctx.room)
 
 

@@ -100,7 +100,14 @@ class UIServer:
             await server._send(ws, {"type": "snapshot", "state": controller.state(0)})
             try:
                 while True:
-                    await ws.receive_text()  # keep-alive; we don't expect input
+                    raw = await ws.receive_text()
+                    # the browser sends commands back (e.g. the STOP-alarm button)
+                    import json as _json
+
+                    try:
+                        controller.handle_command(_json.loads(raw))
+                    except Exception:
+                        pass
             except WebSocketDisconnect:
                 pass
             finally:
