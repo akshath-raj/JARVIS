@@ -35,6 +35,7 @@ class VectorStore:
         self._vectors = np.zeros((0, dim), dtype=np.float32)
         self._chunks: list[dict] = []
         self._docs: dict[str, dict] = {}
+        self._skips: dict[str, str] = {}  # files that couldn't be indexed → don't retry
         self._load()
 
     # ── persistence ──────────────────────────────────────────────────────────
@@ -49,6 +50,7 @@ class VectorStore:
             self._save()
             return
         self._docs = manifest.get("docs", {})
+        self._skips = manifest.get("skips", {})
         try:
             chunks = json.loads(self._cpath.read_text(encoding="utf-8"))
             vectors = np.load(self._vpath)
@@ -65,7 +67,10 @@ class VectorStore:
             np.save(self._vpath, self._vectors)
             self._cpath.write_text(json.dumps(self._chunks, ensure_ascii=False), encoding="utf-8")
             self._mpath.write_text(
-                json.dumps({"embed_key": self._embed_key, "docs": self._docs}, ensure_ascii=False, indent=2),
+                json.dumps(
+                    {"embed_key": self._embed_key, "docs": self._docs, "skips": self._skips},
+                    ensure_ascii=False, indent=2,
+                ),
                 encoding="utf-8",
             )
         except OSError as e:
@@ -80,6 +85,23 @@ class VectorStore:
         with self._lock:
             d = self._docs.get(source)
             return d.get("hash") if d else None
+
+    def is_skipped(self, source: str, sig: str) -> bool:
+        """True if this exact file version already failed to index (don't retry)."""
+        with self._lock:
+            return self._skips.get(source) == sig
+
+    def mark_skipped(self, source: str, sig: str) -> None:
+        with self._lock:
+            self._skips[source] = sig
+            self._save()
+
+    def forget(self, source: str) -> None:
+        """Drop any skip record for a file that has vanished."""
+        with self._lock:
+            if source in self._skips:
+                self._skips.pop(source, None)
+                self._save()
 
     def stats(self) -> dict:
         with self._lock:

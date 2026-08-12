@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -59,6 +60,14 @@ def _last_user_text(items: list[dict]) -> str:
     return ""
 
 
+# strip markdown emphasis/heading/code characters so TTS never speaks "asterisk"
+_MD = re.compile(r"[*_`#]+")
+
+
+def _clean(text: str) -> str:
+    return _MD.sub("", text or "")
+
+
 class _AgentsStream(llm.LLMStream):
     def __init__(self, adapter: "OpenAIAgentsLLM", *, chat_ctx, tools, conn_options) -> None:
         super().__init__(adapter, chat_ctx=chat_ctx, tools=tools, conn_options=conn_options)
@@ -81,20 +90,29 @@ class _AgentsStream(llm.LLMStream):
         result = Runner.run_streamed(
             self._brain, input=items or last_user or "", context=ctx, max_turns=8
         )
+        streamed = False
         async for event in result.stream_events():
             # Stream only the natural-language text the agents produce; tool calls
             # and handoffs carry no text so they're naturally excluded from TTS.
             if event.type == "raw_response_event" and isinstance(
                 event.data, ResponseTextDeltaEvent
             ):
-                delta = event.data.delta
+                delta = _clean(event.data.delta)
                 if delta:
+                    streamed = True
                     self._event_ch.send_nowait(
-                        ChatChunk(
-                            id=request_id,
-                            delta=ChoiceDelta(role="assistant", content=delta),
-                        )
+                        ChatChunk(id=request_id, delta=ChoiceDelta(role="assistant", content=delta))
                     )
+        # Leaf specialists use stop_on_first_tool: the tool's return string IS the
+        # final output and no text is streamed — so speak it directly (one fewer LLM
+        # round-trip per action). This is also a safety net against silent turns.
+        if not streamed:
+            final = getattr(result, "final_output", None)
+            text = _clean(str(final).strip()) if final is not None else ""
+            if text:
+                self._event_ch.send_nowait(
+                    ChatChunk(id=request_id, delta=ChoiceDelta(role="assistant", content=text))
+                )
 
 
 class OpenAIAgentsLLM(llm.LLM):

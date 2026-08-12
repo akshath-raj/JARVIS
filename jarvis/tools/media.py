@@ -62,10 +62,56 @@ class MediaController:
         return p.stdout.strip()
 
     def _js(self, code: str) -> str:
-        return self._osa(f'tell application "{self._app}" to execute active tab of front window javascript "{code}"')
+        """Run JS on the video the user is actually watching. We locate the tab with
+        the most-relevant <video> (playing beats paused, with the active tab winning
+        ties) so 'pause the video' acts on the one on screen even when many YouTube
+        tabs are open — falling back to the active tab of the front window."""
+        target = self._find_media_tab()
+        if target:
+            wi, ti = target
+            return self._osa(
+                f'tell application "{self._app}" to execute tab {ti} of window {wi} javascript "{code}"'
+            )
+        return self._osa(
+            f'tell application "{self._app}" to execute active tab of front window javascript "{code}"'
+        )
+
+    def _find_media_tab(self) -> tuple[int, int] | None:
+        """Return (window_index, tab_index) of the tab whose <video> is most likely
+        the one the user is watching, or None if no tab has a video. Score: has
+        video (+1), has progress (+2), currently playing (+4), is the active tab (+1)."""
+        probe = (
+            "var v=document.querySelector('video');"
+            "v?(1+(v.currentTime>0?2:0)+((!v.paused&&!v.ended)?4:0)):0"
+        )
+        script = (
+            f'tell application "{self._app}"\n'
+            '  set best to ""\n  set bestScore to 0\n  set wi to 0\n'
+            '  repeat with w in windows\n    set wi to wi + 1\n    set ti to 0\n'
+            '    set aidx to active tab index of w\n'
+            '    repeat with t in tabs of w\n      set ti to ti + 1\n'
+            f'      try\n        set sc to (execute t javascript "{probe}") as integer\n'
+            '      on error\n        set sc to 0\n      end try\n'
+            '      if sc > 0 and ti = aidx then set sc to sc + 1\n'
+            '      if sc > bestScore then\n        set bestScore to sc\n'
+            '        set best to (wi as text) & "," & (ti as text)\n      end if\n'
+            '    end repeat\n  end repeat\n  return best\nend tell'
+        )
+        try:
+            out = self._osa(script)
+        except MediaError:
+            return None
+        if not out or "," not in out:
+            return None
+        try:
+            wi, ti = (int(x) for x in out.split(","))
+            return wi, ti
+        except ValueError:
+            return None
 
     def control(self, action: str, value: str = "") -> str:
-        """Run a video action on the active tab. `value` used for set_volume/set_speed."""
+        """Run a video action on the tab the user is watching. `value` used for
+        set_volume/set_speed."""
         a = (action or "").strip().lower().replace(" ", "_")
         a = _ALIASES.get(a, a)
         if a == "set_volume":

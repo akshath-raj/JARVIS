@@ -138,6 +138,28 @@ def test_incremental_sync_add_update_delete(tmp_path):
     assert s4["removed"] == 1 and store.stats()["documents"] == 1
 
 
+def test_failed_extraction_is_cached_not_retried(tmp_path):
+    docs = tmp_path / "docs"; docs.mkdir()
+    (docs / "scanned.txt").write_text("")  # no extractable text → ExtractError
+    rag, store = _pipeline(tmp_path, docs)
+    s1 = rag.sync()
+    assert s1["failed"] == 1
+    # the failure is remembered, so the next scan skips it instead of re-trying
+    s2 = rag.sync()
+    assert s2["failed"] == 0 and s2["unchanged"] == 1
+
+
+def test_scan_limit_spreads_work(tmp_path):
+    docs = tmp_path / "docs"; docs.mkdir()
+    for i in range(5):
+        (docs / f"f{i}.txt").write_text(f"document number {i}")
+    rag, store = _pipeline(tmp_path, docs)
+    s = rag.sync(limit=2)          # only index 2 this cycle
+    assert s["added"] == 2
+    assert rag.sync(limit=2)["added"] == 2   # next cycle picks up 2 more
+    assert rag.sync(limit=2)["added"] == 1   # and the last one
+
+
 def test_ingest_single_file(tmp_path):
     docs = tmp_path / "docs"; docs.mkdir()
     rag, store = _pipeline(tmp_path, docs)

@@ -60,8 +60,10 @@ class RAGPipeline:
         return out
 
     # ── incremental sync ───────────────────────────────────────────────────────
-    def sync(self, dirs: list[str] | None = None) -> dict:
-        """Reconcile the index with disk. Returns a summary dict."""
+    def sync(self, dirs: list[str] | None = None, *, limit: int | None = None) -> dict:
+        """Reconcile the index with disk. Re-embeds only new/changed files (up to
+        `limit` per call so a big backlog spreads over several cycles), prunes
+        deleted ones, and caches files it can't read so they aren't retried."""
         scan_dirs = [str(Path(d).expanduser()) for d in (dirs or self._dirs)]
         files = self._collect(scan_dirs)
         current = {str(p): p for p in files}
@@ -73,14 +75,17 @@ class RAGPipeline:
             except OSError:
                 continue
             prev = self._store.doc_hash(src)
-            if prev == sig:
+            if prev == sig or self._store.is_skipped(src, sig):
                 summary["unchanged"] += 1
                 continue
+            if limit is not None and (summary["added"] + summary["updated"]) >= limit:
+                continue  # defer the rest to the next cycle → stay responsive
             try:
                 self._index_one(p, sig)
                 summary["updated" if prev else "added"] += 1
             except (ExtractError, EmbedError) as e:
-                logger.info("skip %s: %s", p.name, e)
+                logger.debug("skip %s: %s", p.name, e)
+                self._store.mark_skipped(src, sig)  # remember so we don't retry it
                 summary["failed"] += 1
 
         # documents whose files vanished (deleted or moved) — but only prune within
@@ -89,8 +94,9 @@ class RAGPipeline:
         for src in list(self._store.sources()):
             if src not in current and src.startswith(scanned_roots):
                 self._store.remove_document(src)
+                self._store.forget(src)
                 summary["removed"] += 1
-        logger.info("RAG sync: %s", summary)
+        logger.debug("RAG sync: %s", summary)
         return summary
 
     def _index_one(self, path: Path, sig: str) -> None:

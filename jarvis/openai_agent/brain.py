@@ -60,35 +60,30 @@ _PERSONA = (
     "with NO tool and NO handoff. Address the user as 'sir' occasionally."
 )
 
-_ROUTING = (
-    " Hand off to the Music agent for ANYTHING about playing or controlling Spotify "
-    "or the user's music library — play, pause, resume/continue the music, skip, "
-    "volume, loop/repeat AND stop looping, playlists, and their top / liked / "
-    "recently-played songs and artists. Hand off to the Browser agent to open "
-    "websites/apps, control a YouTube/Netflix VIDEO the user is watching "
-    "(subtitles/captions, speed, volume, brightness, pause/seek/fullscreen, close "
-    "the tab), run multi-step logged-in web tasks (downloading files, checking "
-    "accounts like VTOP/AWS/Amazon), or work on documents/assignments. Hand off to "
-    "the Screen agent ONLY to look at / read / explain what is CURRENTLY DISPLAYED "
-    "on the user's screen — never to control a video. Hand off to the Planner agent "
-    "for the calendar, to-do list, and time-based reminders/alarms — 'remind me to X "
-    "at 9pm / in an hour', 'add X to my to-do list', 'I'm done with X', 'what's on my "
-    "calendar', 'stop the alarm', or 'what time is it'. Hand off to the Files agent "
-    "for questions answered by the user's own documents ('what does my report say', "
-    "'summarise my notes'), and to manage files — reorganise/tidy a folder, move or "
-    "copy a file, open files ('open my recent downloads', 'open everything in X'), or "
-    "reindex documents (it can never delete). Use web_search yourself only "
-    "when the answer depends on current/live info (news, prices, weather, scores). "
-    "recall_about_me is ONLY for personal facts you've stored about the user — never "
-    "their listening history (that's the Music agent's recently_played). Use "
-    "remember/forget for saving/removing such facts. For the on-screen dashboard/HUD: "
-    "show_dashboard to bring up / open the interface, hide_dashboard to dismiss it, "
-    "open_dashboard_section to pull up the user's profile/memories/past "
-    "conversations on it, and display_on_dashboard to show a text answer on it. When "
-    "the user asks to SHOW or EXPLAIN what's on their screen ON the dashboard/UI, "
-    "hand off to the Screen agent (it renders the analysis on the HUD). Always "
-    "perform the action immediately; never just claim you did, and never ask for a "
-    "detail the user already gave."
+# One agent, one API call per turn (handoffs would double latency for voice). The
+# tool docstrings carry the detail; this just steers the tricky choices. The
+# cardinal rule: DO the action by CALLING the tool — never narrate a done action.
+_GUIDE = (
+    " CARDINAL RULE: to DO anything you MUST call its tool. You have NOT paused, "
+    "resumed, skipped, changed the volume, added a reminder, moved a file, etc. "
+    "unless you actually CALLED that tool — never say you did something you didn't "
+    "call. Answer general-knowledge/historical facts yourself with no tool. "
+    "Music (Spotify): pause_music, resume_music, next_song, play_song, "
+    "set_music_volume (exact number) or change_volume (up/down), set_loop, the "
+    "playlist/top/liked/recently-played tools. open_site opens a website or app by "
+    "name. play_youtube ONLY when the user says PLAY or WATCH one specific video; if "
+    "they ask to LIST / FIND / RECOMMEND / 'good videos on X' or 'best … videos', use "
+    "web_search and just TELL them the list — do NOT play anything. control_video "
+    "controls a video already playing (subtitles/speed/volume/brightness/pause/seek). "
+    "explain_screen to look at what's on screen (show_in_ui=true to also render it on "
+    "the HUD). web_search for current/live info (news, prices, weather, scores) or "
+    "for lists of recommendations. remember/forget/recall_about_me for stored personal "
+    "facts (NOT listening history). add_reminder/add_todo/add_calendar_event/"
+    "complete_todo/stop_alarm for time & tasks (pass absolute ISO datetimes computed "
+    "from now). ask_documents for questions answered by the user's files; the file "
+    "tools to organise/move/copy/open (you can NEVER delete). show_dashboard / "
+    "hide_dashboard / open_dashboard_section / display_on_dashboard for the HUD. Reply "
+    "in ONE short sentence; ask a question only if an essential detail is missing."
 )
 
 
@@ -104,15 +99,30 @@ def _date_note() -> str:
     )
 
 
-def _triage_instructions(run_context, agent) -> str:
+def _instructions(run_context, agent) -> str:
     ctx = getattr(run_context, "context", None)
     block = getattr(ctx, "memory_block", "") if ctx else ""
-    return _PERSONA + _ROUTING + _date_note() + (block or "")
+    return _PERSONA + _GUIDE + _date_note() + (block or "")
+
+
+def _resolve_model():
+    """Return the model the agent runs on. Cerebras (OpenAI-compatible, far faster)
+    when selected AND its key is present; otherwise the OpenAI model string."""
+    if config.agent_provider == "cerebras" and config.cerebras_api_key:
+        from agents import OpenAIChatCompletionsModel, set_tracing_disabled
+        from openai import AsyncOpenAI
+
+        set_tracing_disabled(True)  # don't ship traces to OpenAI for a non-OpenAI provider
+        client = AsyncOpenAI(base_url=config.cerebras_base_url, api_key=config.cerebras_api_key)
+        logger.info("agent brain on Cerebras %s", config.cerebras_model)
+        return OpenAIChatCompletionsModel(model=config.cerebras_model, openai_client=client)
+    return config.cloud_agent_model
 
 
 def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
                 media=None, screen=None, announce=None, workspace=None,
-                ui=None, open_cb=None, scheduler=None, rag=None, organizer=None):
+                ui=None, open_cb=None, scheduler=None, rag=None, organizer=None,
+                agent_model=None):
     """Return (triage_agent, memory). Dependencies are injectable for tests.
 
     `ui` (a UIController) enables the HUD dashboard tools; `open_cb` is called to
@@ -135,146 +145,41 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
         from jarvis.documents.workspace import Workspace
         workspace = Workspace(downloads_dir=config.browser_downloads)
 
-    model = config.cloud_agent_model
+    model = agent_model or _resolve_model()  # agent_model lets tests/benchmarks override
     settings = ModelSettings(temperature=0.2)
 
-    music_agent = Agent[BrainContext](
-        name="Music",
-        handoff_description="Plays and controls Spotify music and the user's library.",
-        instructions=(
-            _PERSONA + " You control Spotify. Call the matching tool immediately for "
-            "the user's request (play/pause/resume/skip/volume/loop and stop-looping/"
-            "playlists/top/liked/recently-played). Use the user's own words as the "
-            "search query, and EXTRACT any playlist name they gave (e.g. 'add this to "
-            "my workout playlist' → add_current_song_to_playlist('workout')). For "
-            "their listening history use recently_played. Only ask a question if an "
-            "essential detail is genuinely missing; then confirm in one short "
-            "sentence." + _date_note()
-        ),
-        model=model,
-        model_settings=settings,
-        tools=build_music_tools(spotify=spotify, memory=memory, search_mode=config.spotify_search_mode),
+    # ONE agent with every tool → a command is a SINGLE model call. Handoffs would
+    # add a second sequential call (the routing hop) and double the latency, which
+    # is the wrong trade for a voice assistant. `stop_on_first_tool` speaks the
+    # tool's return string directly, so there's no extra "phrasing" call either —
+    # one round-trip per action, and the model can't narrate an action it didn't do.
+    tools = build_music_tools(spotify=spotify, memory=memory, search_mode=config.spotify_search_mode)
+    tools += build_browser_tools(
+        browser=browser, memory=memory, media=media, announce=announce,
+        workspace=workspace, browser_agent_enabled=config.browser_agent_enabled,
     )
-
-    browser_agent = Agent[BrainContext](
-        name="Browser",
-        handoff_description=(
-            "Opens websites/apps, plays and controls YouTube/Netflix video, runs "
-            "multi-step logged-in web tasks, and handles documents/assignments."
-        ),
-        instructions=(
-            _PERSONA + " You drive the browser and on-screen video, run logged-in web "
-            "tasks, and handle documents. Use open_site to open a site by name; "
-            "play_youtube only when the user names something to watch; browser_task "
-            "for multi-step logged-in jobs (downloads, account info) — NOT for merely "
-            "opening a site. control_video controls the video the user is watching — "
-            "subtitles/captions, speed, volume, brightness, pause, seek, fullscreen "
-            "(use play, not restart, to resume). For 'download X and explain it' call "
-            "download_and_explain ALONE (it downloads AND reads it — do NOT also call "
-            "browser_task). If the user says to finish/do the assignment (optionally "
-            "naming a format like a notebook/doc/slides), call do_assignment right "
-            "away with their words — the assignment is already loaded, don't ask for "
-            "its content. To open the finished answer you MUST call open_answer — "
-            "never say the answer is open unless you actually called it. In general "
-            "you have NOT performed an action unless you called its tool. Confirm in "
-            "one short sentence." + _date_note()
-        ),
-        model=model,
-        model_settings=settings,
-        tools=build_browser_tools(
-            browser=browser, memory=memory, media=media, announce=announce,
-            workspace=workspace, browser_agent_enabled=config.browser_agent_enabled,
-        ),
-    )
-
-    screen_agent = Agent[BrainContext](
-        name="Screen",
-        handoff_description=(
-            "Reads and explains what is currently DISPLAYED on the user's screen. "
-            "Not for controlling video (that's the Browser agent)."
-        ),
-        instructions=(
-            "You are JARVIS. The user wants to know about what's on their screen. Call "
-            "explain_screen with their question. If they asked to SHOW / OPEN / DISPLAY "
-            "the explanation on the dashboard / UI / screen (e.g. 'explain this formula "
-            "and open it in the UI'), pass show_in_ui=true so it renders on the HUD. "
-            "Then relay the returned explanation to the user IN FULL and in detail — do "
-            "not summarise or shorten it. It is spoken aloud, so use plain prose."
-        ),
-        model=model,
-        model_settings=settings,
-        tools=build_screen_tools(screen=screen, memory=memory, ui=ui),
-    )
-
-    handoffs = [music_agent, browser_agent, screen_agent]
-    if scheduler is not None:
-        planner_agent = Agent[BrainContext](
-            name="Planner",
-            handoff_description=(
-                "Manages the user's calendar, to-do list, and time-based reminders/"
-                "alarms; tells the time; stops a ringing alarm."
-            ),
-            instructions=(
-                _PERSONA + " You manage the user's time: to-dos, calendar events, and "
-                "reminders that ring an alarm. add_reminder for 'remind me to X at/in "
-                "…' (it rings an alarm at that time); add_todo for a task with no time; "
-                "add_calendar_event to schedule something; complete_todo when they say "
-                "they've finished something ('I'm done with X'); stop_alarm to silence a "
-                "ringing alarm. When setting a reminder or event, compute the absolute "
-                "time from the current time and pass it as an ISO 8601 datetime. Confirm "
-                "in one short sentence." + _date_note()
-            ),
-            model=model,
-            model_settings=settings,
-            tools=build_planner_tools(scheduler=scheduler, memory=memory),
-        )
-        handoffs.append(planner_agent)
-
-    if rag is not None or organizer is not None:
-        files_agent = Agent[BrainContext](
-            name="Files",
-            handoff_description=(
-                "Answers questions about the user's documents (RAG over their files) "
-                "and manages files: reorganise, move, copy, open — never deletes."
-            ),
-            instructions=(
-                _PERSONA + " You handle the user's documents and files. Use "
-                "ask_documents to answer any question whose answer is in their files "
-                "(reports, notes, PDFs, slides). Use organize_folder to tidy a "
-                "cluttered folder, move_file/copy_file for explicit moves/copies, "
-                "open_file/open_recent/open_folder_files to open things, list_folder "
-                "to see what's there, reindex_documents to refresh the index. You can "
-                "read, copy, move, and open — but you can NEVER delete a file, so "
-                "don't promise to. Confirm in one short sentence." + _date_note()
-            ),
-            model=model,
-            model_settings=settings,
-            tools=build_files_tools(rag=rag, organizer=organizer, memory=memory),
-        )
-        handoffs.append(files_agent)
-
-    triage_tools = build_triage_tools(tavily=tavily, memory=memory)
+    tools += build_screen_tools(screen=screen, memory=memory, ui=ui)
+    tools += build_triage_tools(tavily=tavily, memory=memory)
     if ui is not None:
-        triage_tools = triage_tools + build_ui_tools(ui=ui, open_cb=open_cb)
+        tools += build_ui_tools(ui=ui, open_cb=open_cb)
+    if scheduler is not None:
+        tools += build_planner_tools(scheduler=scheduler, memory=memory)
+    if rag is not None or organizer is not None:
+        tools += build_files_tools(rag=rag, organizer=organizer, memory=memory)
 
-    triage = Agent[BrainContext](
+    agent = Agent[BrainContext](
         name="JARVIS",
-        instructions=_triage_instructions,
+        instructions=_instructions,
         model=model,
         model_settings=settings,
-        tools=triage_tools,
-        handoffs=handoffs,
+        tool_use_behavior="stop_on_first_tool",
+        tools=tools,
     )
-
-    logger.info(
-        "OpenAI Agents brain ready (model %s; specialists: Music, Browser, Screen)",
-        model,
-    )
-    return triage, memory
+    logger.info("OpenAI Agents brain ready (single agent, model %s, %d tools)", model, len(tools))
+    return agent, memory
 
 
 def describe() -> str:
-    return (
-        f"OpenAI Agents SDK (triage+handoffs, model {config.cloud_agent_model}, "
-        f"vision {config.vision_model})"
-    )
+    on_cerebras = config.agent_provider == "cerebras" and config.cerebras_api_key
+    brain = f"Cerebras {config.cerebras_model}" if on_cerebras else f"OpenAI {config.cloud_agent_model}"
+    return f"OpenAI Agents SDK (single agent, {brain}, vision {config.vision_model})"

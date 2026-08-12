@@ -111,25 +111,23 @@ def _build():
     )
 
 
-def test_brain_has_triage_and_three_specialists():
-    triage, _ = _build()
-    assert triage.name == "JARVIS"
-    names = {a.name for a in triage.handoffs}
-    assert names == {"Music", "Browser", "Screen"}
+def test_brain_is_single_fast_agent():
+    """One agent, no handoffs — a command is a single API call (voice latency)."""
+    agent, _ = _build()
+    assert agent.name == "JARVIS"
+    assert agent.handoffs == []
+    # stop_on_first_tool → the tool result is spoken directly, no extra LLM call
+    assert agent.tool_use_behavior == "stop_on_first_tool"
 
 
-def test_specialists_have_expected_tools():
-    triage, _ = _build()
-    by_name = {a.name: a for a in triage.handoffs}
-    music = {t.name for t in by_name["Music"].tools}
-    assert {"play_song", "pause_music", "list_playlists", "recently_played"} <= music
-    assert len(music) == 17
-    browser = {t.name for t in by_name["Browser"].tools}
-    assert {"open_site", "browser_task", "control_video", "download_and_explain"} <= browser
-    screen = {t.name for t in by_name["Screen"].tools}
-    assert screen == {"explain_screen", "take_screenshot"}
-    triage_tools = {t.name for t in triage.tools}
-    assert {"web_search", "remember", "forget", "recall_about_me"} == triage_tools
+def test_agent_has_all_domain_tools():
+    agent, _ = _build()
+    names = {t.name for t in agent.tools}
+    # music + browser + screen + web/memory all live on the one agent
+    assert {"play_song", "pause_music", "change_volume", "recently_played"} <= names
+    assert {"open_site", "play_youtube", "control_video"} <= names
+    assert {"explain_screen", "take_screenshot"} <= names
+    assert {"web_search", "remember", "forget", "recall_about_me"} <= names
 
 
 def test_screen_tools_expose_question_arg_and_routing_hint():

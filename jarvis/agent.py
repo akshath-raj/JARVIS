@@ -28,7 +28,7 @@ logger = logging.getLogger("jarvis")
 
 def prewarm(proc: JobProcess) -> None:
     # Load VAD once per worker process.
-    proc.userdata["vad"] = silero.VAD.load(min_silence_duration=0.4)
+    proc.userdata["vad"] = silero.VAD.load(min_silence_duration=config.endpoint_delay)
 
 
 def _wake() -> WakeController:
@@ -65,7 +65,11 @@ async def _entrypoint_langgraph(ctx: JobContext) -> None:
         llm=VoiceLLMAdapter(graph=graph),
         tts=pipeline.build_tts(),
         turn_detection=pipeline.build_turn_detection(),
-        vad=ctx.proc.userdata.get("vad") or silero.VAD.load(min_silence_duration=0.4),
+        vad=ctx.proc.userdata.get("vad") or silero.VAD.load(min_silence_duration=config.endpoint_delay),
+        # only end the turn after a gap > endpoint_delay; wait longer if the sentence
+        # sounds unfinished (up to endpoint_max_delay) so the user can pause to think.
+        min_endpointing_delay=config.endpoint_delay,
+        max_endpointing_delay=config.endpoint_max_delay,
     )
 
     @session.on("conversation_item_added")
@@ -176,7 +180,11 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
         llm=OpenAIAgentsLLM(brain=brain, memory=memory),
         tts=pipeline.build_tts(),
         turn_detection=pipeline.build_turn_detection(),
-        vad=ctx.proc.userdata.get("vad") or silero.VAD.load(min_silence_duration=0.4),
+        vad=ctx.proc.userdata.get("vad") or silero.VAD.load(min_silence_duration=config.endpoint_delay),
+        # only end the turn after a gap > endpoint_delay; wait longer if the sentence
+        # sounds unfinished (up to endpoint_max_delay) so the user can pause to think.
+        min_endpointing_delay=config.endpoint_delay,
+        max_endpointing_delay=config.endpoint_max_delay,
     )
 
     @session.on("conversation_item_added")
@@ -197,15 +205,33 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
     if scheduler is not None:
         scheduler.start()  # begin ticking reminders (fires alarms at due time)
 
+    # Warm the model connection in the background so the FIRST real command isn't
+    # slow (TLS + first-token cold start otherwise adds several seconds).
+    import asyncio as _asyncio
+
+    async def _warmup() -> None:
+        try:
+            from agents import Runner
+
+            from jarvis.openai_agent.brain import BrainContext
+
+            await Runner.run(brain, input="hello", context=BrainContext(memory=memory), max_turns=1)
+        except Exception:
+            pass
+
+    _asyncio.create_task(_warmup())
+
     # Auto-ingest: periodically rescan the watched folders so freshly-downloaded
     # documents get indexed without re-embedding everything.
     if rag is not None and config.rag_scan_seconds > 0:
         import asyncio
 
         async def _rag_scan_loop() -> None:
+            await asyncio.sleep(config.rag_scan_start_delay)  # don't compete with startup
             while True:
                 try:
-                    await asyncio.to_thread(rag.sync)
+                    # cap new files per cycle so a large backlog never hogs the machine
+                    await asyncio.to_thread(rag.sync, None, limit=config.rag_max_per_scan)
                 except Exception as e:  # never let indexing crash the assistant
                     logger.warning("RAG scan failed: %s", e)
                 await asyncio.sleep(config.rag_scan_seconds)
@@ -247,7 +273,11 @@ async def _entrypoint_native(ctx: JobContext) -> None:
         llm=pipeline.build_llm(),
         tts=pipeline.build_tts(),
         turn_detection=pipeline.build_turn_detection(),
-        vad=ctx.proc.userdata.get("vad") or silero.VAD.load(min_silence_duration=0.4),
+        vad=ctx.proc.userdata.get("vad") or silero.VAD.load(min_silence_duration=config.endpoint_delay),
+        # only end the turn after a gap > endpoint_delay; wait longer if the sentence
+        # sounds unfinished (up to endpoint_max_delay) so the user can pause to think.
+        min_endpointing_delay=config.endpoint_delay,
+        max_endpointing_delay=config.endpoint_max_delay,
     )
 
     @session.on("conversation_item_added")

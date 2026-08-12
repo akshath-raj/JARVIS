@@ -64,6 +64,12 @@ class Config:
     # ── Turn detection ─────────────────────────────────────────────────
     # Use the LiveKit MultilingualModel turn detector (better than VAD-only).
     use_turn_detector: bool = _truthy(os.getenv("JARVIS_TURN_DETECTOR", "1"))
+    # Endpointing: JARVIS only assumes you've finished once your speech gap exceeds
+    # `endpoint_delay` seconds (400ms default) — so short breaths don't cut you off.
+    # When your sentence still sounds unfinished, the turn detector keeps waiting up
+    # to `endpoint_max_delay`, giving you room to think mid-thought.
+    endpoint_delay: float = float(os.getenv("JARVIS_ENDPOINT_DELAY", "0.4"))
+    endpoint_max_delay: float = float(os.getenv("JARVIS_ENDPOINT_MAX_DELAY", "6.0"))
 
     # ── Activation (wake word + smart follow-up) ───────────────────────
     # Say "jarvis" or "hey jarvis" to activate. After JARVIS asks a clarifying
@@ -94,9 +100,15 @@ class Config:
     #           This is the "cloud brain" with full feature parity + screen vision.
     # "native": the previous hand-rolled LiveKit supervisor (fallback / rollback).
     orchestrator: str = os.getenv("JARVIS_ORCHESTRATOR", "langgraph")
-    # Frontier model the OpenAI Agents SDK brain (triage + specialists) runs on.
-    # gpt-4.1-mini is a reliable, cheap tool-caller that handles handoffs well.
-    cloud_agent_model: str = os.getenv("JARVIS_CLOUD_AGENT_MODEL", "gpt-4.1-mini")
+    # Which provider backs the agent brain: "openai" (default) or "cerebras"
+    # (OpenAI-compatible, ~2000+ tok/s — much lower latency). Cerebras uses
+    # cerebras_model (gpt-oss-120b) and CEREBRAS_API_KEY; vision + RAG answering
+    # always stay on OpenAI. Falls back to OpenAI if the Cerebras key is missing.
+    agent_provider: str = os.getenv("JARVIS_AGENT_PROVIDER", "openai")
+    cerebras_base_url: str = os.getenv("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
+    # Frontier model the OpenAI Agents SDK brain runs on. A fast "mini" tool-caller
+    # keeps voice latency low (a single agent = one call per command).
+    cloud_agent_model: str = os.getenv("JARVIS_CLOUD_AGENT_MODEL", "gpt-5.4-mini")
     # Vision model used to look at a screenshot and explain what's on screen.
     # gpt-4o gives detailed, accurate reads of arbitrary screen content.
     vision_model: str = os.getenv("JARVIS_VISION_MODEL", "gpt-4o")
@@ -118,13 +130,18 @@ class Config:
     rag_embed_model: str = os.getenv("JARVIS_RAG_EMBED_MODEL", "nomic-embed-text")
     rag_index_dir: str = os.path.expanduser(os.getenv("JARVIS_RAG_INDEX_DIR", "~/.jarvis/rag"))
     # Folders scanned for documents to index (comma-separated). All under the home.
+    # Default is just Downloads (where files land); add Documents/Desktop if you want
+    # them indexed too — but a big/cluttered tree means a heavy first embed.
     rag_dirs: tuple[str, ...] = tuple(
-        d.strip() for d in os.getenv("JARVIS_RAG_DIRS", "~/Downloads,~/Documents,~/Desktop").split(",")
+        d.strip() for d in os.getenv("JARVIS_RAG_DIRS", "~/Downloads").split(",")
         if d.strip()
     )
-    # Auto-ingest: rescan the folders this often (seconds) so new downloads get
-    # indexed automatically. 0 disables the background scan.
-    rag_scan_seconds: int = int(os.getenv("JARVIS_RAG_SCAN_SECONDS", "120"))
+    # Auto-ingest: rescan the folders this often (seconds). 0 disables it. The first
+    # scan is delayed so it never competes with startup, and each cycle indexes at
+    # most `rag_max_per_scan` new files so it spreads the work out (stays responsive).
+    rag_scan_seconds: int = int(os.getenv("JARVIS_RAG_SCAN_SECONDS", "300"))
+    rag_scan_start_delay: int = int(os.getenv("JARVIS_RAG_SCAN_START_DELAY", "120"))
+    rag_max_per_scan: int = int(os.getenv("JARVIS_RAG_MAX_PER_SCAN", "12"))
 
     # ── Sandboxed file organiser (read / copy / move / open — never delete) ──
     files_enabled: bool = _truthy(os.getenv("JARVIS_FILES", "1"))
