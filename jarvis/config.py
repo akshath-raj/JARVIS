@@ -24,7 +24,9 @@ def _truthy(val: str) -> bool:
 @dataclass(frozen=True)
 class Config:
     # ── Mode ───────────────────────────────────────────────────────────
-    cloud: bool = _truthy(os.getenv("JARVIS_MODE", "0"))
+    # Default is CLOUD voice now (Deepgram nova-3 STT + Deepgram Aura-2 TTS);
+    # set JARVIS_MODE=0 for the fully-local Whisper + Kokoro stack.
+    cloud: bool = _truthy(os.getenv("JARVIS_MODE", "1"))
     # In cloud mode, run local device-action agents (music/calendar/files) on the
     # LOCAL LLM for reliable, private tool execution. Answering stays cloud.
     hybrid_local_actions: bool = _truthy(os.getenv("JARVIS_HYBRID_LOCAL_ACTIONS", "1"))
@@ -100,11 +102,11 @@ class Config:
     #           This is the "cloud brain" with full feature parity + screen vision.
     # "native": the previous hand-rolled LiveKit supervisor (fallback / rollback).
     orchestrator: str = os.getenv("JARVIS_ORCHESTRATOR", "langgraph")
-    # Which provider backs the agent brain: "openai" (default) or "cerebras"
-    # (OpenAI-compatible, ~2000+ tok/s — much lower latency). Cerebras uses
-    # cerebras_model (gpt-oss-120b) and CEREBRAS_API_KEY; vision + RAG answering
-    # always stay on OpenAI. Falls back to OpenAI if the Cerebras key is missing.
-    agent_provider: str = os.getenv("JARVIS_AGENT_PROVIDER", "openai")
+    # Which provider backs the agent brain: "cerebras" (default — OpenAI-compatible,
+    # ~2000+ tok/s, much lower latency) or "openai". Cerebras uses cerebras_model
+    # (gpt-oss-120b) and CEREBRAS_API_KEY; vision + RAG answering always stay on
+    # OpenAI. Falls back to OpenAI if the Cerebras key is missing.
+    agent_provider: str = os.getenv("JARVIS_AGENT_PROVIDER", "cerebras")
     cerebras_base_url: str = os.getenv("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
     # Frontier model the OpenAI Agents SDK brain runs on. A fast "mini" tool-caller
     # keeps voice latency low (a single agent = one call per command).
