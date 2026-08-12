@@ -29,6 +29,7 @@ from jarvis.config import config
 from jarvis.graph.memory import MemoryStore
 from jarvis.openai_agent.tools import (
     build_browser_tools,
+    build_files_tools,
     build_music_tools,
     build_planner_tools,
     build_screen_tools,
@@ -72,7 +73,11 @@ _ROUTING = (
     "on the user's screen — never to control a video. Hand off to the Planner agent "
     "for the calendar, to-do list, and time-based reminders/alarms — 'remind me to X "
     "at 9pm / in an hour', 'add X to my to-do list', 'I'm done with X', 'what's on my "
-    "calendar', 'stop the alarm', or 'what time is it'. Use web_search yourself only "
+    "calendar', 'stop the alarm', or 'what time is it'. Hand off to the Files agent "
+    "for questions answered by the user's own documents ('what does my report say', "
+    "'summarise my notes'), and to manage files — reorganise/tidy a folder, move or "
+    "copy a file, open files ('open my recent downloads', 'open everything in X'), or "
+    "reindex documents (it can never delete). Use web_search yourself only "
     "when the answer depends on current/live info (news, prices, weather, scores). "
     "recall_about_me is ONLY for personal facts you've stored about the user — never "
     "their listening history (that's the Music agent's recently_played). Use "
@@ -107,7 +112,7 @@ def _triage_instructions(run_context, agent) -> str:
 
 def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
                 media=None, screen=None, announce=None, workspace=None,
-                ui=None, open_cb=None, scheduler=None):
+                ui=None, open_cb=None, scheduler=None, rag=None, organizer=None):
     """Return (triage_agent, memory). Dependencies are injectable for tests.
 
     `ui` (a UIController) enables the HUD dashboard tools; `open_cb` is called to
@@ -224,6 +229,29 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
             tools=build_planner_tools(scheduler=scheduler, memory=memory),
         )
         handoffs.append(planner_agent)
+
+    if rag is not None or organizer is not None:
+        files_agent = Agent[BrainContext](
+            name="Files",
+            handoff_description=(
+                "Answers questions about the user's documents (RAG over their files) "
+                "and manages files: reorganise, move, copy, open — never deletes."
+            ),
+            instructions=(
+                _PERSONA + " You handle the user's documents and files. Use "
+                "ask_documents to answer any question whose answer is in their files "
+                "(reports, notes, PDFs, slides). Use organize_folder to tidy a "
+                "cluttered folder, move_file/copy_file for explicit moves/copies, "
+                "open_file/open_recent/open_folder_files to open things, list_folder "
+                "to see what's there, reindex_documents to refresh the index. You can "
+                "read, copy, move, and open — but you can NEVER delete a file, so "
+                "don't promise to. Confirm in one short sentence." + _date_note()
+            ),
+            model=model,
+            model_settings=settings,
+            tools=build_files_tools(rag=rag, organizer=organizer, memory=memory),
+        )
+        handoffs.append(files_agent)
 
     triage_tools = build_triage_tools(tavily=tavily, memory=memory)
     if ui is not None:

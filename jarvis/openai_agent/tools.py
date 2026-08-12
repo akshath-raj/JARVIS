@@ -513,6 +513,131 @@ def build_planner_tools(*, scheduler, memory=None) -> list:
     ]
 
 
+# ── Files & documents: RAG Q&A + sandboxed organise / move / copy / open ────
+def build_files_tools(*, rag=None, organizer=None, memory=None) -> list:
+    from jarvis.files.organizer import FileError
+    from jarvis.files.sandbox import SandboxError
+
+    tools = []
+
+    if rag is not None:
+        @function_tool
+        async def ask_documents(question: str, filename: str = "") -> str:
+            """Answer a question using the user's indexed documents (PDFs, Word,
+            PowerPoint, notes). Use for "what does my <doc> say about X", "summarise
+            the report", "according to my notes …", or any question whose answer is
+            in the user's files. Optionally set `filename` to restrict to documents
+            whose path contains that text."""
+            def _do():
+                ans = rag.answer(question, source_contains=filename)
+                if memory is not None:
+                    memory.log_activity(f"answered from documents: {question}")
+                return ans
+            return await asyncio.to_thread(_do)
+
+        @function_tool
+        async def reindex_documents() -> str:
+            """Rescan the user's folders and update the document index (add new
+            files, refresh changed ones, drop deleted ones). Use for "reindex my
+            documents", "scan my files", or if a document seems missing."""
+            s = await asyncio.to_thread(rag.sync)
+            return (f"Index updated, sir: {s['added']} added, {s['updated']} refreshed, "
+                    f"{s['removed']} removed ({s['unchanged']} unchanged).")
+
+        tools += [ask_documents, reindex_documents]
+
+    if organizer is not None:
+        @function_tool
+        async def organize_folder(folder: str = "~/Downloads", mode: str = "move") -> str:
+            """Reorganise a cluttered folder, sorting files into category subfolders
+            (Documents, Images, Code, …) and setting exact duplicates aside in a
+            _Duplicates folder (nothing is ever deleted). Use for "organise my
+            downloads", "tidy up folder X", "sort out my files". mode is 'move'
+            (default) or 'copy'."""
+            def _do():
+                return organizer.organize(folder, mode=mode)
+            try:
+                s = await asyncio.to_thread(_do)
+            except (FileError, SandboxError) as e:
+                return f"I couldn't do that, sir: {e}"
+            cats = ", ".join(f"{n} {c}" for c, n in s["by_category"].items()) or "nothing"
+            return (f"Organised {s['moved']} file(s) into {cats}"
+                    + (f"; set aside {s['duplicates']} duplicate(s)" if s['duplicates'] else "")
+                    + ", sir.")
+
+        @function_tool
+        async def move_file(source: str, destination: str) -> str:
+            """Move a file or folder to another location (within your files). Use for
+            "move X to Y". Never overwrites (auto-renames on collision)."""
+            try:
+                return await asyncio.to_thread(organizer.move, source, destination)
+            except (FileError, SandboxError, OSError) as e:
+                return f"I couldn't move that, sir: {e}"
+
+        @function_tool
+        async def copy_file(source: str, destination: str) -> str:
+            """Copy a file or folder to another location. Use for "copy X to Y",
+            "duplicate X into Y". Never overwrites."""
+            try:
+                return await asyncio.to_thread(organizer.copy, source, destination)
+            except (FileError, SandboxError, OSError) as e:
+                return f"I couldn't copy that, sir: {e}"
+
+        @function_tool
+        async def open_file(path: str) -> str:
+            """Open a specific file or folder in its default app. Use for "open X"."""
+            try:
+                return await asyncio.to_thread(organizer.open_paths, [path])
+            except (SandboxError, OSError) as e:
+                return f"I couldn't open that, sir: {e}"
+
+        @function_tool
+        async def open_recent(folder: str = "~/Downloads", count: int = 3) -> str:
+            """Open the most recently added/modified files in a folder. Use for "open
+            the file I just downloaded", "open my recent downloads", "open the last 3
+            files in X"."""
+            def _do():
+                recents = organizer.recent_files(folder, n=count)
+                return organizer.open_paths([str(p) for p in recents])
+            try:
+                return await asyncio.to_thread(_do)
+            except (SandboxError, OSError) as e:
+                return f"I couldn't do that, sir: {e}"
+
+        @function_tool
+        async def open_folder_files(folder: str) -> str:
+            """Open all the files inside a folder. Use for "open all files under X",
+            "open everything in my <folder> folder"."""
+            def _do():
+                files = [str(p) for p in organizer.list_dir(folder) if p.is_file()]
+                return organizer.open_paths(files)
+            try:
+                return await asyncio.to_thread(_do)
+            except (SandboxError, OSError) as e:
+                return f"I couldn't do that, sir: {e}"
+
+        @function_tool
+        async def list_folder(folder: str = "~/Downloads") -> str:
+            """List what's in a folder. Use for "what's in my downloads", "list folder X"."""
+            def _do():
+                items = organizer.list_dir(folder)
+                names = [p.name + ("/" if p.is_dir() else "") for p in items]
+                return names
+            try:
+                names = await asyncio.to_thread(_do)
+            except (SandboxError, OSError) as e:
+                return f"I couldn't list that, sir: {e}"
+            if not names:
+                return "That folder is empty, sir."
+            head = ", ".join(names[:25])
+            return f"{len(names)} item(s): {head}" + (" …" if len(names) > 25 else "")
+
+        tools += [organize_folder, move_file, copy_file, open_file,
+                  open_recent, open_folder_files, list_folder]
+
+    return tools
+
+
 # ── HUD dashboard (hidden UI, voice-summoned) ───────────────────────────────
 def build_ui_tools(*, ui, open_cb=None) -> list:
     @function_tool

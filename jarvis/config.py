@@ -109,6 +109,28 @@ class Config:
     ui_port: int = int(os.getenv("JARVIS_UI_PORT", "8137"))
     ui_user: str = os.getenv("JARVIS_UI_USER", "Akshath")
 
+    # ── Document RAG (local embeddings + self-updating vector store) ───
+    # JARVIS indexes your documents (PDF/DOCX/PPTX/TXT/MD) and answers questions
+    # about them. Embeddings are LOCAL by default (Ollama nomic-embed-text) so the
+    # corpus never leaves the machine; only retrieved snippets go to the answer LLM.
+    rag_enabled: bool = _truthy(os.getenv("JARVIS_RAG", "1"))
+    rag_embed_backend: str = os.getenv("JARVIS_RAG_EMBED", "ollama")  # ollama | openai
+    rag_embed_model: str = os.getenv("JARVIS_RAG_EMBED_MODEL", "nomic-embed-text")
+    rag_index_dir: str = os.path.expanduser(os.getenv("JARVIS_RAG_INDEX_DIR", "~/.jarvis/rag"))
+    # Folders scanned for documents to index (comma-separated). All under the home.
+    rag_dirs: tuple[str, ...] = tuple(
+        d.strip() for d in os.getenv("JARVIS_RAG_DIRS", "~/Downloads,~/Documents,~/Desktop").split(",")
+        if d.strip()
+    )
+    # Auto-ingest: rescan the folders this often (seconds) so new downloads get
+    # indexed automatically. 0 disables the background scan.
+    rag_scan_seconds: int = int(os.getenv("JARVIS_RAG_SCAN_SECONDS", "120"))
+
+    # ── Sandboxed file organiser (read / copy / move / open — never delete) ──
+    files_enabled: bool = _truthy(os.getenv("JARVIS_FILES", "1"))
+    # Everything JARVIS touches must stay under this root (default: your home).
+    files_sandbox: str = os.path.expanduser(os.getenv("JARVIS_FILES_SANDBOX", "~"))
+
     # ── Calendar / to-dos / reminders + alarms ─────────────────────────
     # Time-aware planning: JARVIS can set reminders that ring an alarm, keep a
     # to-do list, and manage a calendar/agenda (shown on the HUD).

@@ -151,9 +151,20 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
 
             ui.set_command_handler(_on_cmd)
 
+    # ── Document RAG (local index) + sandboxed file organiser ──────────────
+    rag = organizer = None
+    if config.rag_enabled:
+        from jarvis.rag import build_rag
+
+        rag = build_rag(config)
+    if config.files_enabled:
+        from jarvis.files import FileOrganizer, Sandbox
+
+        organizer = FileOrganizer(Sandbox(config.files_sandbox))
+
     brain, memory = build_brain(
         announce=announcer.announce, memory=shared_memory,
-        ui=ui, open_cb=open_cb, scheduler=scheduler,
+        ui=ui, open_cb=open_cb, scheduler=scheduler, rag=rag, organizer=organizer,
     )
 
     from jarvis.agents.graph_agent import GraphAgent
@@ -185,6 +196,22 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
     announcer.session = session
     if scheduler is not None:
         scheduler.start()  # begin ticking reminders (fires alarms at due time)
+
+    # Auto-ingest: periodically rescan the watched folders so freshly-downloaded
+    # documents get indexed without re-embedding everything.
+    if rag is not None and config.rag_scan_seconds > 0:
+        import asyncio
+
+        async def _rag_scan_loop() -> None:
+            while True:
+                try:
+                    await asyncio.to_thread(rag.sync)
+                except Exception as e:  # never let indexing crash the assistant
+                    logger.warning("RAG scan failed: %s", e)
+                await asyncio.sleep(config.rag_scan_seconds)
+
+        asyncio.create_task(_rag_scan_loop())
+
     await session.start(agent=GraphAgent(), room=ctx.room)
 
 
