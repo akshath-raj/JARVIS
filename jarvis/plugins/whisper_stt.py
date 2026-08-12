@@ -11,6 +11,8 @@ once per turn.
 from __future__ import annotations
 
 import logging
+import re
+import zlib
 
 import numpy as np
 from livekit import rtc
@@ -35,6 +37,21 @@ _MLX_REPOS = {
     "medium.en": "mlx-community/whisper-medium.en-mlx",
     "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
 }
+
+
+def _dehallucinate(text: str) -> str:
+    """Drop a transcript that is a repetition loop (e.g. 'Inodorodorodoro…').
+    Whisper occasionally loops on ambiguous audio; such text compresses far more
+    than natural speech, so a high compression ratio is a reliable tell."""
+    t = text.strip()
+    if len(t) < 40:
+        return t
+    compact = re.sub(r"\s+", " ", t)
+    ratio = len(compact) / max(1, len(zlib.compress(compact.encode("utf-8"))))
+    if ratio > 3.2:
+        logger.info("dropped hallucinated transcript (%d chars, ratio %.1f)", len(t), ratio)
+        return ""
+    return t
 
 
 class WhisperSTT(stt.STT):
@@ -83,6 +100,14 @@ class WhisperSTT(stt.STT):
                 language=lang,
                 fp16=True,
                 initial_prompt=_NAME_BIAS_PROMPT,
+                # anti-hallucination: don't let the model loop on its own output
+                # ("Inodorodoro…"), and drop low-confidence / silent / repetitive segments.
+                condition_on_previous_text=False,
+                temperature=0.0,
+                compression_ratio_threshold=2.2,
+                logprob_threshold=-1.0,
+                no_speech_threshold=0.6,
+                hallucination_silence_threshold=2.0,
             )
             text = (result.get("text") or "").strip()
         else:
@@ -90,12 +115,19 @@ class WhisperSTT(stt.STT):
                 samples,
                 language=lang,
                 beam_size=1,
-                vad_filter=False,
+                vad_filter=True,  # drop non-speech that seeds hallucinations
                 initial_prompt=_NAME_BIAS_PROMPT,
                 hotwords="Jarvis",
+                condition_on_previous_text=False,
+                temperature=0.0,
+                compression_ratio_threshold=2.2,
+                log_prob_threshold=-1.0,
+                no_speech_threshold=0.6,
+                no_repeat_ngram_size=3,  # hard-stops the repetition loop
             )
             text = " ".join(seg.text for seg in segments).strip()
 
+        text = _dehallucinate(text)
         return stt.SpeechEvent(
             type=stt.SpeechEventType.FINAL_TRANSCRIPT,
             alternatives=[stt.SpeechData(language=lang, text=text)],
