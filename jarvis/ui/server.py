@@ -7,6 +7,7 @@ full-screen Iron Man feel (falls back to the default browser).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import subprocess
 import threading
@@ -17,14 +18,18 @@ import uvicorn
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.routing import Mount, Route
+from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from jarvis.ui.controller import UIController
 
 logger = logging.getLogger("jarvis.ui")
 
 _STATIC = Path(__file__).parent / "static"
+# Refresh passive data (profile / memories / conversations) this often. Events
+# (reveal / explanation / navigate) are pushed instantly and don't wait for this.
+_SNAPSHOT_EVERY = 3.0
 
 
 class UIServer:
@@ -33,9 +38,42 @@ class UIServer:
         self._port = port
         self._thread: threading.Thread | None = None
         self._started = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._clients: set[WebSocket] = set()
+
+    # ── WebSocket push ──────────────────────────────────────────────────────
+    async def _send(self, ws: WebSocket, msg: dict) -> None:
+        try:
+            await ws.send_json(msg)
+        except Exception:
+            self._clients.discard(ws)
+
+    async def _broadcast(self, msg: dict) -> None:
+        for ws in list(self._clients):
+            await self._send(ws, msg)
+
+    def _notify(self, event: dict) -> None:
+        """Called from the agent thread — schedule an instant push on the server
+        loop (the two run on different event loops)."""
+        loop = self._loop
+        if loop is None:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self._broadcast({"type": "event", "event": event}), loop
+            )
+        except Exception:
+            pass
+
+    async def _snapshot_loop(self) -> None:
+        while True:
+            await asyncio.sleep(_SNAPSHOT_EVERY)
+            if self._clients:
+                await self._broadcast({"type": "snapshot", "state": self._controller.state(0)})
 
     def _app(self) -> Starlette:
         controller = self._controller
+        server = self
 
         async def index(request: Request):
             from starlette.responses import FileResponse
@@ -54,13 +92,40 @@ class UIServer:
 
             return Response(status_code=204)
 
+        async def ws_endpoint(ws: WebSocket):
+            await ws.accept()
+            server._clients.add(ws)
+            # send a full snapshot immediately so a fresh/late client renders + can
+            # replay the current reveal state and last explanation.
+            await server._send(ws, {"type": "snapshot", "state": controller.state(0)})
+            try:
+                while True:
+                    await ws.receive_text()  # keep-alive; we don't expect input
+            except WebSocketDisconnect:
+                pass
+            finally:
+                server._clients.discard(ws)
+
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def lifespan(app):
+            server._loop = asyncio.get_running_loop()
+            controller.set_notifier(server._notify)
+            task = asyncio.create_task(server._snapshot_loop())
+            try:
+                yield
+            finally:
+                task.cancel()
+
         routes = [
             Route("/", index),
             Route("/api/state", state),
             Route("/favicon.ico", favicon),
+            WebSocketRoute("/ws", ws_endpoint),
             Mount("/static", app=StaticFiles(directory=str(_STATIC)), name="static"),
         ]
-        return Starlette(routes=routes)
+        return Starlette(routes=routes, lifespan=lifespan)
 
     def start(self) -> None:
         if self._started:

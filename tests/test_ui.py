@@ -57,6 +57,16 @@ def test_reveal_and_events_are_incremental(tmp_path):
     assert st2["last_explanation"]["body"] == "x = -b/2a"
 
 
+def test_notifier_fires_on_each_event(tmp_path):
+    ui = _ctrl(tmp_path)
+    seen = []
+    ui.set_notifier(lambda ev: seen.append(ev["type"]))
+    ui.reveal()
+    ui.show_explanation(title="t", body="b")
+    ui.navigate("about")
+    assert seen == ["reveal", "explanation", "navigate"]
+
+
 def test_navigate_reveals_and_emits(tmp_path):
     ui = _ctrl(tmp_path)
     ui.navigate("conversations", item_id=123)

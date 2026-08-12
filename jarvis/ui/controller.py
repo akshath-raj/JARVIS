@@ -25,14 +25,28 @@ class UIController:
         self._revealed = False
         # the most recent explanation, so a client that connects late still sees it
         self._last_explanation: Optional[dict] = None
+        # optional push hook — the WebSocket server registers this to deliver an
+        # event to connected browsers the instant it's emitted (no polling).
+        self._notifier = None
+
+    def set_notifier(self, callback) -> None:
+        """Register a thread-safe callback(event: dict) fired on each new event."""
+        self._notifier = callback
 
     # ── event emitters (called from the agent) ──────────────────────────────
     def _emit(self, event: dict) -> int:
         with self._lock:
             self._seq += 1
-            event = {**event, "id": self._seq, "ts": time.time()}
-            self._events.append(event)
-            return self._seq
+            full = {**event, "id": self._seq, "ts": time.time()}
+            self._events.append(full)
+            seq = self._seq
+        # notify outside the lock so a slow transport can't stall the agent
+        if self._notifier is not None:
+            try:
+                self._notifier(full)
+            except Exception:
+                pass
+        return seq
 
     def reveal(self) -> None:
         with self._lock:

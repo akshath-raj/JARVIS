@@ -153,32 +153,52 @@ function navigate(ev) {
   }
 }
 
-// ── event application + polling ─────────────────────────────────────────────
+// ── event application ────────────────────────────────────────────────────────
+let pendingExpl = null;
 function applyEvent(ev) {
   switch (ev.type) {
-    case "reveal": revealPending = true; break;
-    case "hide": /* handled by parent close; keep page */ break;
+    case "reveal": revealPending = true; maybeReveal(lastState); break;
+    case "hide": break; // the parent window is closed by voice; page stays loaded
     case "explanation": if (booted) showExplanation(ev); else { revealPending = true; pendingExpl = ev; } break;
     case "navigate": if (booted) navigate(ev); break;
   }
 }
-let pendingExpl = null;
 
-async function poll() {
-  try {
-    const res = await fetch(`/api/state?since=${cursor}`, { cache: "no-store" });
-    const state = await res.json();
-    renderProfile(state);
-    renderConversations(state);
-    (state.events || []).forEach(applyEvent);
-    cursor = state.cursor || cursor;
-
-    if ((state.revealed || revealPending) && !booted) {
-      await reveal(state.user);
-      if (pendingExpl) { showExplanation(pendingExpl); pendingExpl = null; }
-      else if (state.last_explanation) showExplanation(state.last_explanation);
-    }
-  } catch (_) { /* server not up yet */ }
+let lastState = { user: "Akshath" };
+async function maybeReveal(state) {
+  if (booted) return;
+  if (!(state && (state.revealed || revealPending))) return;
+  await reveal(state.user);
+  if (pendingExpl) { showExplanation(pendingExpl); pendingExpl = null; }
+  else if (state && state.last_explanation) showExplanation(state.last_explanation);
 }
-setInterval(poll, 350);
-poll();
+
+function applySnapshot(state) {
+  lastState = state;
+  renderProfile(state);
+  renderConversations(state);
+  cursor = state.cursor || cursor;
+  maybeReveal(state);
+}
+
+// ── WebSocket transport (instant push, with reconnect) ───────────────────────
+let ws = null, backoff = 400;
+function connect() {
+  try {
+    ws = new WebSocket(`ws://${location.host}/ws`);
+  } catch (_) { setTimeout(connect, backoff); return; }
+  ws.onopen = () => { backoff = 400; };
+  ws.onmessage = (m) => {
+    let msg; try { msg = JSON.parse(m.data); } catch { return; }
+    if (msg.type === "snapshot") applySnapshot(msg.state);
+    else if (msg.type === "event") { const ev = msg.event; cursor = Math.max(cursor, ev.id || 0); applyEvent(ev); }
+  };
+  ws.onclose = () => { ws = null; setTimeout(connect, backoff); backoff = Math.min(backoff * 1.6, 4000); };
+  ws.onerror = () => { try { ws.close(); } catch (_) {} };
+}
+
+// initial render via a one-shot fetch (so the page isn't blank before the first
+// snapshot arrives), then live over the socket.
+fetch("/api/state?since=0", { cache: "no-store" })
+  .then((r) => r.json()).then(applySnapshot).catch(() => {});
+connect();
