@@ -12,23 +12,27 @@ on-device**. One agent holds every tool and chains them for multi-step requests
 (*"explain this graph and check the 2026 numbers"* → looks at your screen, then
 searches the web, then answers).
 
+> **Platform:** macOS only (Apple Silicon recommended). See
+> [Platform support](#platform-support) for why, and Windows/Linux notes.
+
 ---
 
 ## Contents
 - [Feature overview](#feature-overview)
 - [Two pipelines (`JARVIS_MODE`)](#two-pipelines-jarvis_mode)
-- [Quick start](#quick-start)
-- [Setup & API keys](#setup--api-keys)
-- [macOS permissions](#macos-permissions)
+- [Install & run — step by step](#install--run--step-by-step)
+- [Optional features & their setup](#optional-features--their-setup)
+- [Platform support](#platform-support)
 - [Configuration reference](#configuration-reference)
 - [Architecture](#architecture)
 - [Privacy & safety](#privacy--safety)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Feature overview
 
-Everything below is available with the default `openai` brain (a single agent on
+Everything below works with the default `openai` brain (a single agent on
 Cerebras/OpenAI). Say the wake word, then your request.
 
 ### 🎵 Music (Spotify)
@@ -37,72 +41,49 @@ never steals focus. Needs the Spotify desktop app installed + logged in.
 - *"play Bohemian Rhapsody by Queen"*, *"pause"*, *"skip"*, *"louder"*, *"what's playing?"*
 - *"loop this"*, *"play Weightless on repeat"*
 - Playlists — *"what playlists do I have"*, *"play my Focus playlist"*, *"add this to Favourites"*
-- Your library — *"play my most-played song"*, *"my top songs/artists"*, *"my liked songs"*, *"what did I play recently"*
+- Your library — *"play my most-played song"*, *"my top songs/artists"*, *"my liked songs"*
 
 ### 🌐 Browser & web (Chrome)
 - *"open instagram"*, *"play some lofi on youtube"*, *"open a new MrBeast video"*, *"show me reels"*
-- Live info via **Tavily** web search — *"latest news on X"*, *"current price of bitcoin"*, *"weather tomorrow"*
-- **Browser agent** (logged-in, multi-step workflows) — *"download my OS notes from VTOP"*,
-  *"check my AWS balance"*. Drives your **real Chrome profile** via
-  [browser-use](https://github.com/browser-use/browser-use) in an isolated venv.
-  One-time setup: `bash scripts/setup_browser_agent.sh`.
-- **Assignment workflow** — *"download the latest assignment and explain it"* →
-  *"finish it as a notebook"* → *"open it"*: downloads, explains aloud, has an AI
-  complete it, assembles the file, and opens it.
+- Live info via **Tavily** web search — *"latest news on X"*, *"price of bitcoin"*, *"weather tomorrow"*
+- **Browser agent** (logged-in, multi-step) — *"download my OS notes from VTOP"*, *"check my AWS balance"*
+- **Assignment workflow** — *"download the latest assignment and explain it"* → *"finish it as a notebook"* → *"open it"*
 
 ### 🖥️ Screen vision & on-screen document help
-- *"what's on my screen?"*, *"explain this error"*, *"read this for me"* → screenshots
-  and explains what's displayed (`show_in_ui` renders it on the HUD).
+- *"what's on my screen?"*, *"explain this error"*, *"read this for me"* → screenshots and explains.
 - *"explain this topic, I don't understand it"* → knows **which document is live on
-  screen**, works out the **page/slide** you're on, and reads the **surrounding
-  pages of that subtopic** from your indexed files (not just the visible screenshot)
-  to explain it properly.
+  screen**, the **page/slide** you're on, and reads the **surrounding pages of that
+  subtopic** from your indexed files to explain it properly.
 
 ### 📄 Your documents (local RAG)
-JARVIS indexes your PDFs / Word / PowerPoint / notes into a **local, self-updating
-vector store** (new downloads added, changed files re-embedded, deleted files
-dropped — without re-embedding everything). Ask about them by **description — no
-exact filename needed**:
-- *"what does my machine-learning assignment say about backprop?"*, *"explain page 4 of my calculus notes"*
-- *"summarise my thermodynamics notes"*, *"what's slide 5 about"*
-- *"open my OS notes"* (opens the right file), *"where's my budget spreadsheet / when did I download it"*
-- If several files match, JARVIS reads back the top few and asks which one.
-
-Embeddings are **local** (Ollama `nomic-embed-text`); answering runs on Cerebras.
-Re-scan happens automatically; force a full rebuild with `python scripts/reindex_rag.py`.
+JARVIS indexes your PDFs / Word / PowerPoint / notes into a **local, self-updating**
+vector store. Ask by **description — no exact filename needed**:
+- *"what does my ML assignment say about backprop?"*, *"explain page 4 of my calculus notes"*
+- *"summarise my thermodynamics notes"*, *"open my OS notes"*, *"where's my budget spreadsheet?"*
 
 ### 🗂️ Sandboxed file organiser
-Read / copy / move / open — and tidy folders into category subfolders. **Never
-deletes anything** (duplicates are moved aside), and is **confined to your home
-folder** (it can't move files outside the sandbox).
-- *"organise my downloads"*, *"move X to Y"*, *"open my recent downloads"*, *"what's in my Documents"*
+Read / copy / move / open / tidy folders. **Never deletes** and is **confined to
+your home folder**. *"organise my downloads"*, *"move X to Y"*, *"open my recent downloads"*.
 
 ### 📅 Calendar, to-dos, reminders & alarms
-Time-aware: computes absolute times from natural language.
-- *"remind me to submit the assignment at 9pm"*, *"remind me in an hour"*, *"add milk to my to-do list"*
-- A due reminder **rings a looping alarm**, pops up on the HUD (STOP / MARK DONE), and speaks. *"Jarvis, stop the alarm"* / *"I'm done with X"*.
+*"remind me to submit at 9pm"*, *"remind me in an hour"*, *"add milk to my list"*. A
+due reminder **rings an alarm**, pops up on the HUD, and speaks; *"stop the alarm"* / *"I'm done with X"*.
 
 ### 🎯 Focus assist mode
-- *"focus mode"*, *"start a pomodoro"*, *"deep work session"* → **closes every open
-  distraction** (Instagram, YouTube, Netflix, TikTok, Reddit, X, …), starts a timer,
-  and **keeps closing anything distracting you reopen** — announcing it — until you
-  say *"end focus mode"*. If you ask it to open a blocked site, it refuses.
-- Techniques: **pomodoro** (25/5), **classic** (50/10), **52-17**, **90-20** (ultradian), **flowtime**.
-- Shown live on the HUD with a countdown, phase (work/break), and sprint count.
+*"focus mode"*, *"start a pomodoro"* → **closes every open distraction** (Instagram,
+YouTube, Netflix, TikTok, Reddit, X…), starts a timer, and **keeps closing anything
+you reopen** until *"end focus mode"*. Techniques: **pomodoro / classic / 52-17 /
+90-20 / flowtime**. Shown live on the HUD with a countdown.
 
 ### 🟦 The HUD dashboard
-A hidden Iron-Man-style interface that **opens automatically on launch** (⌄ HIDE
-button to dismiss; say *"show the dashboard"* to bring it back). Shows your
-profile/memories, past conversations, agenda & to-dos, a **live Q&A feed** of
-everything you ask and every answer, **rendered explanations** (e.g. a screen
-analysis with the captured image), the **focus timer**, and **alarm pop-ups**.
-Served locally only.
+A hidden Iron-Man-style interface that **opens automatically on launch** (⌄ HIDE to
+dismiss; say *"show the dashboard"* to bring it back). Shows your profile/memories,
+past conversations, agenda, a **live Q&A feed**, **rendered explanations**, the
+**focus timer**, and **alarm pop-ups**. Local only.
 
 ### 🧠 Persistent memory (local)
-Learns what you like from what you do, from *"remember that I…"*, and from facts
-mined out of conversation in the background — recalled each turn to personalise
-replies. *"play me something I'd enjoy"*, *"what do you know about me?"*, *"forget that…"*.
-Lives in `~/.jarvis/memory/` (local JSON + Ollama embeddings).
+Learns what you like and recalls it to personalise replies. *"remember that I…"*,
+*"what do you know about me?"*, *"forget that…"*. Stored in `~/.jarvis/memory/`.
 
 ---
 
@@ -115,126 +96,207 @@ Lives in `~/.jarvis/memory/` (local JSON + Ollama embeddings).
 | **Vision** | Cerebras `gemma-4-31b` → gpt-4o | (uses the cloud vision key) |
 | **TTS** | Deepgram Aura-2 (`aura-2-draco-en`) | Kokoro-82M |
 
-**CLOUD** is fast and hosted (audio → Deepgram, text/tools → Cerebras). **LOCAL**
-keeps the voice loop fully on-device (Whisper + Kokoro + Ollama); the only egress
-is the optional Spotify catalog search (a song title). Note that document RAG and
-long-term memory always use **local** Ollama embeddings in either mode.
+**CLOUD** is fast and hosted. **LOCAL** keeps the voice loop fully on-device.
+Document RAG and long-term memory always use **local** Ollama embeddings in either mode.
 
 ---
 
-## Quick start
+## Install & run — step by step
 
-**Clickable launcher (no terminal):** double-click **`scripts/Start JARVIS.command`**
-in Finder, or build a proper Mac app with `bash scripts/make_app.sh` (creates
-`~/Applications/JARVIS.app` — drag it to your Dock). First launch: right-click ▸
-**Open** to get past Gatekeeper.
+> **Follow these in order on a Mac.** ~15 minutes. **Steps 1–8 give you a talking
+> assistant** with document Q&A, focus mode, and the HUD. Everything else is in
+> [Optional features](#optional-features--their-setup). Every command is copy-paste.
 
-**Terminal:**
+### Step 1 — Install Homebrew (skip if you already have `brew`)
+Homebrew is the macOS package manager. Paste this into **Terminal** (⌘-Space → "Terminal"):
 ```bash
-source .venv/bin/activate
-python -m jarvis.agent console
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 ```
-Say **"Hey Jarvis,"** then your request (follow-ups within ~20s skip the wake word):
-*"Play Bohemian Rhapsody."* · *"What's on my screen?"* · *"Focus mode."* ·
-*"Summarise my OS notes."* · *"Remind me to submit at 9pm."* · *"What's on my calendar?"*
+When it finishes, run the two `echo`/`eval` lines it prints (to add `brew` to your PATH), or just close and reopen Terminal.
 
----
+### Step 2 — Install the system tools
+```bash
+brew install python git ollama ffmpeg
+```
 
-## Setup & API keys
+### Step 3 — Get the code
+```bash
+git clone https://github.com/akshath-raj/JARVIS.git
+cd JARVIS
+```
 
-### 1. Python environment (Python 3.11+; 3.13 tested)
+### Step 4 — Create the Python environment
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env      # then fill in keys below
 ```
+> You'll run JARVIS from this folder with `.venv` active. To reactivate later:
+> `cd JARVIS && source .venv/bin/activate`.
 
-### 2. Cloud keys — needed for the default pipeline
-| Service | Used for | Get a key |
-|---|---|---|
-| **Cerebras** | the brain + RAG answering + screen vision (fast) | [cloud.cerebras.ai](https://cloud.cerebras.ai) · [docs](https://inference-docs.cerebras.ai) |
-| **Deepgram** | speech-to-text + text-to-speech | [console.deepgram.com/signup](https://console.deepgram.com/signup) |
-
-Put them in `.env`:
-```ini
-CEREBRAS_API_KEY=csk-...
-DEEPGRAM_API_KEY=...
-```
-That's the minimum for a talking assistant in cloud mode.
-
-### 3. Ollama — for embeddings (RAG + memory), and for LOCAL mode
-Document RAG and long-term memory use a **local** embedding model, so install
-Ollama even in cloud mode:
+### Step 5 — Start Ollama and pull the embedding model
+Document search and memory always run locally through Ollama, so this is required
+even in cloud mode:
 ```bash
-brew install ollama
-ollama serve                        # or: brew services start ollama
-ollama pull nomic-embed-text        # embeddings for RAG + memory
-# LOCAL mode (JARVIS_MODE=0) also needs a chat model:
-ollama pull qwen2.5:7b-instruct
+brew services start ollama      # runs Ollama in the background, and on login
+ollama pull nomic-embed-text
 ```
-Ollama: [ollama.com](https://ollama.com). The clickable launcher starts `ollama serve` for you if it's installed.
 
-### 4. Optional keys — unlock more features
-| Service | Unlocks | Get a key |
+### Step 6 — Get your two free API keys
+You need two keys for the default (cloud) setup:
+
+| Key | What it powers | Where to get it |
 |---|---|---|
-| **OpenAI** | fallback brain/vision; the browser agent & assignment workflow | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| **Tavily** | live web search (news, prices, weather) | [app.tavily.com](https://app.tavily.com) (free tier) |
-| **Spotify** | music search, playlists & library | [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) |
+| **Cerebras** | the brain, document answers, screen vision | 1. Sign up at **[cloud.cerebras.ai](https://cloud.cerebras.ai)** → 2. **API Keys** → **Create**. It starts with `csk-`. |
+| **Deepgram** | speech-to-text + text-to-speech (the voice) | 1. Sign up at **[console.deepgram.com/signup](https://console.deepgram.com/signup)** (free credit) → 2. **Create API Key**. |
 
+### Step 7 — Create your `.env` and paste the keys
+```bash
+cp .env.example .env
+open -e .env            # opens the file in TextEdit
+```
+In the file that opens, find these two lines and paste your keys after the `=`:
+```ini
+CEREBRAS_API_KEY=csk-paste-your-cerebras-key-here
+DEEPGRAM_API_KEY=paste-your-deepgram-key-here
+```
+**Save (⌘S) and close.** That's the minimum — everything else in `.env` already has
+sensible defaults. (Your `.env` holds secrets and is git-ignored; never share it.)
+
+### Step 8 — Run it
+```bash
+python -m jarvis.agent console
+```
+- The **HUD dashboard opens automatically** and boots with a "Welcome back" animation.
+- macOS pops up a **Microphone** permission request — click **Allow**.
+- Say: **"Hey Jarvis, what's the tallest mountain in the world?"**
+
+Prefer no terminal? Double-click **`scripts/Start JARVIS.command`** in Finder (first
+time: right-click ▸ **Open** ▸ **Open** to get past Gatekeeper). Or build a real app
+with `bash scripts/make_app.sh` → `~/Applications/JARVIS.app` (drag it to your Dock).
+
+### Step 9 — Grant permissions as features ask for them
+Open **System Settings ▸ Privacy & Security** and add your **Terminal** (or
+`JARVIS.app`) under each of these. Most are also prompted automatically the first
+time you use the feature:
+
+| Permission | Needed for |
+|---|---|
+| **Microphone** | hearing you (prompted on first run) |
+| **Screen Recording** | *"explain my screen"* / on-screen document help |
+| **Automation** | controlling Chrome & System Events — music, browser, **focus mode** |
+| **Accessibility** | reading the focused window's title (which document you mean) |
+
+> After granting a permission, **quit and reopen** the terminal/app so it takes effect.
+
+**You're done.** Try: *"Play some lofi on YouTube."* · *"Focus mode."* ·
+*"What's on my screen?"* · *"Remind me to stretch in 20 minutes."* ·
+*"Summarise my notes."* (put a PDF in `~/Downloads` first).
+
+---
+
+## Optional features & their setup
+
+Add any of these later — each is independent. Put keys in the same `.env`.
+
+<details>
+<summary><b>🎵 Spotify (music)</b></summary>
+
+1. Install the **Spotify desktop app** and log in (Premium recommended).
+2. Create a free app at **[developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)**, copy the **Client ID** and **Client Secret** into `.env`:
+   ```ini
+   SPOTIFY_CLIENT_ID=...
+   SPOTIFY_CLIENT_SECRET=...
+   ```
+3. **Playlists & library** (not just search) need a one-time login. In the Spotify
+   dashboard, add `http://127.0.0.1:8080/callback` to your app's **Redirect URIs**, then:
+   ```bash
+   python -m jarvis.spotify_auth
+   ```
+</details>
+
+<details>
+<summary><b>🌐 Tavily (live web search)</b></summary>
+
+Get a free key at **[app.tavily.com](https://app.tavily.com)** and add:
+```ini
+TAVILY_API_KEY=tvly-...
+```
+Enables *"what's the latest news on…"*, *"current price of…"*, *"weather tomorrow"*.
+</details>
+
+<details>
+<summary><b>🤖 OpenAI (fallback brain/vision, browser agent, assignments)</b></summary>
+
+Get a key at **[platform.openai.com/api-keys](https://platform.openai.com/api-keys)**:
 ```ini
 OPENAI_API_KEY=sk-...
-TAVILY_API_KEY=tvly-...
-SPOTIFY_CLIENT_ID=...
-SPOTIFY_CLIENT_SECRET=...
 ```
+Used as a fallback if Cerebras is unavailable, and required by the browser agent
+and the assignment workflow (below).
+</details>
 
-**Spotify playlists & library** need a one-time user login (search alone only needs
-the client id/secret). Add `http://127.0.0.1:8080/callback` to your app's Redirect
-URIs, then:
+<details>
+<summary><b>🧭 Browser agent (logged-in web workflows)</b></summary>
+
+Multi-step tasks on sites you're logged into (*"download my notes from VTOP"*). Runs
+in its own venv because its dependencies conflict with the main stack:
 ```bash
-python -m jarvis.spotify_auth
+bash scripts/setup_browser_agent.sh
+# optional local captcha solver:
+ollama pull qwen2.5vl:7b
 ```
+Needs `OPENAI_API_KEY`. ⚠️ It drives your **real logged-in Chrome**, so browsed page
+content goes to OpenAI and a malicious page could prompt-inject it — it runs only
+when you ask, with step/time caps.
+</details>
 
-### 5. LOCAL-mode voice model (only if you set `JARVIS_MODE=0`)
-Download the Kokoro TTS files once (~350 MB):
+<details>
+<summary><b>🔒 Fully local mode (no cloud, nothing leaves your Mac)</b></summary>
+
+Set `JARVIS_MODE=0` in `.env`, then install the local chat + voice models:
 ```bash
+ollama pull qwen2.5:7b-instruct
+# Kokoro TTS voice files (~350 MB), downloaded once:
 curl -L -o models/kokoro-v1.0.onnx \
   https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
 curl -L -o models/voices-v1.0.bin \
   https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 ```
-
-### 6. Browser agent (optional — logged-in web workflows)
-Runs in a separate venv because its deps conflict with the main stack:
-```bash
-bash scripts/setup_browser_agent.sh
-# optional local captcha solver: ollama pull qwen2.5vl:7b
-```
-Reasoning uses a frontier model via `OPENAI_API_KEY`. ⚠️ It drives your **real
-logged-in Chrome**, so browsed page content goes to OpenAI and a malicious page
-could prompt-inject it — it runs only when you ask, with step/time caps.
+Local STT is mlx-whisper on Apple Silicon (auto-falls back to faster-whisper elsewhere).
+</details>
 
 ---
 
-## macOS permissions
+## Platform support
 
-Grant these to your terminal (or `JARVIS.app`) under **System Settings ▸ Privacy &
-Security** — most are prompted on first use:
+**macOS only, for now.** The voice *brain* (LiveKit + Deepgram/Cerebras, or local
+Whisper/Kokoro/Ollama) is cross-platform, but nearly every *action* JARVIS performs
+is implemented with **macOS-native tools**:
 
-- **Microphone** — to hear you.
-- **Screen Recording** — for *"explain my screen"* and on-screen document help.
-- **Automation** — to control Google Chrome & System Events (browser control,
-  media control, **focus mode** closing tabs).
-- **Accessibility** — lets JARVIS read the *focused window's title* so it knows
-  which open document you mean (falls back gracefully without it).
+| Capability | macOS tool used |
+|---|---|
+| Spotify, browser & media control, focus mode, "which window is focused" | **AppleScript** (`osascript`) |
+| Screen vision (screenshots) | **`screencapture`** |
+| Opening files & apps | **`open`** |
+| Alarm sound | **`afplay`** |
+| Fastest local STT | **mlx-whisper** (Apple Silicon / Metal) |
+
+So on **Windows or Linux it will not work out of the box** — you'd get the voice
+pipeline but none of the actions. A port is feasible but non-trivial: swap the macOS
+shells for platform equivalents (e.g. `spotipy`/media keys for music, Playwright/CDP
+for the browser, `mss`/`pyautogui` for screenshots, `xdg-open`/`start` for opening
+files, `playsound` for alarms) and use `faster-whisper` (already the fallback)
+instead of mlx-whisper. The cross-platform pieces (Ollama chat, RAG embeddings,
+Tavily search) run anywhere, but there's no supported non-macOS entrypoint today.
+PRs welcome.
 
 ---
 
 ## Configuration reference
 
 All settings live in **`.env`** (copied from **`.env.example`**, which documents
-every option). The essentials:
+every option with inline notes). The essentials:
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -243,15 +305,11 @@ every option). The essentials:
 | `JARVIS_AGENT_PROVIDER` | `cerebras` | `cerebras` (fast) or `openai`; falls back to OpenAI if no Cerebras key |
 | `JARVIS_WAKE` / `JARVIS_WAKE_WORDS` | `1` / `jarvis,…` | wake word on/off + trigger words |
 | `JARVIS_UI` | `1` | HUD dashboard (auto-opens on launch) |
-| `JARVIS_RAG` / `JARVIS_RAG_DIRS` | `1` / Downloads,Documents,Desktop | document indexing + which folders |
+| `JARVIS_RAG` / `JARVIS_RAG_DIRS` | `1` / Downloads,Documents,Desktop | document indexing + folders |
 | `JARVIS_FILES` / `JARVIS_FILES_SANDBOX` | `1` / `~` | file organiser + sandbox root |
 | `JARVIS_SCHEDULER` | `1` | calendar / to-dos / reminders / alarms |
 | `JARVIS_FOCUS` / `JARVIS_FOCUS_TECHNIQUE` | `1` / `pomodoro` | focus mode + default technique |
 | `JARVIS_BROWSER_AGENT` | `1` | logged-in browser workflows |
-
-Model tuning (`CEREBRAS_MODEL`, `JARVIS_CEREBRAS_VISION_MODEL`, `WHISPER_MODEL`,
-`OLLAMA_MODEL`, endpointing delays, RAG scan cadence, focus blocklist, …) is all in
-`.env.example` with inline notes.
 
 ---
 
@@ -267,36 +325,46 @@ mic ─► VAD ─► STT ─► [wake gate] ─► BRAIN (agent + tools + memor
 ```
 
 - **Wake word with smart follow-up:** say *"jarvis"* / *"hey jarvis"* to activate
-  (the word is stripped). After a **clarifying question** JARVIS stays awake so you
-  answer directly; after a normal answer it sleeps until the next wake word.
-  `JARVIS_WAKE=0` replies to everything.
-- **One agent, all tools:** a single agent holds every capability. Device actions
-  resolve in one fast round-trip; informational tools keep the loop open so
-  multi-step requests complete and are synthesised into one answer. `gpt-oss` runs
-  at low reasoning effort for speed (~0.5–0.8s/step on Cerebras).
-- **Custom LiveKit LLM adapter:** the whole agent framework is plugged in as the
-  LLM node of the STT→LLM→TTS pipeline; STT/TTS are unchanged.
+  (the word is stripped). After a **clarifying question** it stays awake; after a
+  normal answer it sleeps. `JARVIS_WAKE=0` replies to everything.
+- **One agent, all tools:** device actions resolve in one fast round-trip;
+  informational tools keep the loop open so multi-step requests complete and are
+  synthesised into one answer. `gpt-oss` runs at low reasoning effort for speed.
+- **Custom LiveKit LLM adapter:** the whole agent framework is the LLM node of the
+  STT→LLM→TTS pipeline; STT/TTS are unchanged.
 
 ---
 
 ## Privacy & safety
 
 - **File organiser can never delete** — only read / copy / move / open — and is
-  **sandboxed to your home folder** (enforced structurally; there are no
-  delete/remove operations anywhere in the file layer).
-- **Local by default where it matters:** document embeddings and long-term memory
-  are computed locally (Ollama) and stored as local JSON under `~/.jarvis/`.
+  **sandboxed to your home folder** (enforced structurally).
+- **Local where it matters:** document embeddings and long-term memory are computed
+  locally (Ollama) and stored as local JSON under `~/.jarvis/`.
 - **LOCAL mode** (`JARVIS_MODE=0`) keeps the entire voice loop on-device.
-- **`.env` holds secrets and is gitignored** — never commit it.
+- **`.env` holds secrets and is git-ignored** — never commit it.
 - **Cloud egress, made explicit:** in cloud mode, audio goes to Deepgram and your
   text/tool calls + screenshots go to Cerebras/OpenAI. The browser agent sends
   browsed page content to OpenAI and acts on your logged-in sessions.
 
 ---
 
-## Handy scripts
+## Troubleshooting
+
+- **No response / no audio** — check your mic in System Settings ▸ Privacy ▸
+  Microphone; make sure Ollama is running (`brew services start ollama`).
+- **"couldn't capture the screen"** — grant **Screen Recording** to your terminal, then reopen it.
+- **Focus mode / music does nothing** — grant **Automation** (Chrome + System
+  Events) the first time macOS prompts; if you dismissed it, re-enable under Privacy ▸ Automation.
+- **Cerebras/Deepgram errors** — re-check the keys in `.env` (no quotes, no trailing spaces).
+- **Documents not found** — put files in `~/Downloads`, `~/Documents`, or `~/Desktop`;
+  force a rebuild with `python scripts/reindex_rag.py`.
+- **Spotify won't play** — the desktop app must be installed and logged in.
+
+### Handy scripts
 - `scripts/Start JARVIS.command` — double-click launcher.
 - `scripts/make_app.sh` — build `JARVIS.app`.
 - `scripts/setup_browser_agent.sh` — install the isolated browser-agent venv.
 - `scripts/reindex_rag.py` — force a full document re-index.
 - `python -m jarvis.spotify_auth` — authorise Spotify playlists/library.
+</content>
