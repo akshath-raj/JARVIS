@@ -15,3 +15,6 @@ models/*.bin
 
 # OS
 .DS_Store
+
+# local launch/marketing notes (not for the public repo)
+LAUNCH_KIT.md

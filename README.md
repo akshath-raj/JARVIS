@@ -1,5 +1,10 @@
 # JARVIS — a voice AI assistant for macOS
 
+![Platform: macOS](https://img.shields.io/badge/platform-macOS-black?logo=apple)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+![Local-first](https://img.shields.io/badge/local--first-Ollama%20%2B%20Whisper%20%2B%20Kokoro-orange)
+
 A voice-enabled assistant in the spirit of Iron Man's JARVIS. Wake it with
 **"Hey Jarvis,"** talk to it, and it controls your Mac: plays music, drives the
 browser, reads and explains what's on your screen, answers questions from your own
@@ -346,6 +351,12 @@ mic ─► VAD ─► STT ─► [wake gate] ─► BRAIN (agent + tools + memor
 - **Cloud egress, made explicit:** in cloud mode, audio goes to Deepgram and your
   text/tool calls + screenshots go to Cerebras/OpenAI. The browser agent sends
   browsed page content to OpenAI and acts on your logged-in sessions.
+
+---
+
+## License
+
+[MIT](LICENSE) — free to use, modify, and distribute. Contributions and forks welcome.
 
 ---
 
