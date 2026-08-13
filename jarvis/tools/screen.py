@@ -62,6 +62,11 @@ class ScreenController:
         self._api_key = openai_api_key or os.getenv("OPENAI_API_KEY", "")
         self._base_url = base_url  # empty = OpenAI; else an OpenAI-compatible host
 
+    @property
+    def model(self) -> str:
+        """The vision model actually in use (e.g. 'gemma-4-31b' on Cerebras)."""
+        return self._vision_model
+
     def _vision_call(self, instruction: str, image_b64: str, *, max_output: int):
         """One OpenAI-compatible vision request. Works for OpenAI and Cerebras."""
         from openai import OpenAI

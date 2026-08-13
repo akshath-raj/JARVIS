@@ -402,7 +402,7 @@ def build_screen_tools(*, screen: ScreenController, memory, ui=None, rag=None) -
                 ans, img = screen.analyse(question)
                 ui.show_explanation(
                     title=question.strip()[:60] or "Screen analysis",
-                    body=ans, image_b64=img, source="screen vision · gpt-4o",
+                    body=ans, image_b64=img, source=f"screen vision · {screen.model}",
                 )
             else:
                 ans = screen.explain(question)
@@ -451,7 +451,7 @@ def build_screen_tools(*, screen: ScreenController, memory, ui=None, rag=None) -
                 if result is None:
                     # not indexed / couldn't locate → fall back to pure screen vision
                     ans, img = screen.analyse(question or "Explain the topic shown here.")
-                    cite = "screen vision · gpt-4o"
+                    cite = f"screen vision · {screen.model}"
                     title = (question.strip()[:60] or "On-screen explanation")
                 else:
                     ans = result["answer"]
