@@ -212,12 +212,14 @@ class Config:
         os.getenv("JARVIS_BROWSER_USER_DATA_DIR", "~/Library/Application Support/Google/Chrome")
     )
     browser_profile_dir: str = os.getenv("JARVIS_BROWSER_PROFILE", "Default")
-    # A Chrome profile dir can only be used by ONE Chrome process at a time. To run
-    # headless in the background WHILE your Chrome is open, JARVIS clones the profile
-    # (cookies/logins, minus caches) to its own dir and drives that copy.
-    #   auto (default) = clone only when Chrome is running; else use the real profile.
-    #   always = always clone (headless); never = require Chrome closed (no clone).
-    browser_clone_profile: str = os.getenv("JARVIS_BROWSER_CLONE_PROFILE", "auto")
+    # A Chrome profile dir can only be used by ONE Chrome process at a time.
+    #   never (default) = always drive your REAL Chrome profile in a VISIBLE window;
+    #     if Chrome is already open, JARVIS asks you to close it first so it can take
+    #     over. This is what you want to actually see and use what it opens.
+    #   auto = clone the profile (cookies/logins) into a copy and drive that when your
+    #     Chrome is open, so a task can run alongside it; else uses the real profile.
+    #   always = always clone. The clone honors JARVIS_BROWSER_HEADLESS.
+    browser_clone_profile: str = os.getenv("JARVIS_BROWSER_CLONE_PROFILE", "never")
     browser_clone_dir: str = os.path.expanduser(
         os.getenv("JARVIS_BROWSER_CLONE_DIR", "~/.jarvis/chrome-clone")
     )

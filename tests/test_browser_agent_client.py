@@ -50,8 +50,9 @@ def test_chrome_open_aborts_in_never_mode(monkeypatch):
 
 
 def test_chrome_open_clones_in_auto_mode(monkeypatch):
-    # In 'auto' mode with Chrome open, it clones the profile (headless) instead of aborting.
-    monkeypatch.setattr(client, "config", _cfg())
+    # In 'auto' mode with Chrome open, it clones the profile and drives the copy,
+    # honoring the headless setting (visible by default) rather than forcing hidden.
+    monkeypatch.setattr(client, "config", _cfg(browser_clone_profile="auto"))
     monkeypatch.setattr(client, "_chrome_running", lambda: True)
     monkeypatch.setattr(client, "_clone_profile", lambda: "/tmp/clone")
     monkeypatch.setattr(client.os.path, "exists", lambda p: True)
@@ -68,7 +69,7 @@ def test_chrome_open_clones_in_auto_mode(monkeypatch):
     monkeypatch.setattr(client.asyncio, "create_subprocess_exec", fake_exec)
     out = _run(client._execute("check my aws balance"))
     assert out == "aws balance $5"
-    assert sent["job"]["user_data_dir"] == "/tmp/clone" and sent["job"]["headless"] is True
+    assert sent["job"]["user_data_dir"] == "/tmp/clone" and sent["job"]["headless"] is False
 
 
 def test_execute_spawns_subprocess_and_parses(monkeypatch):

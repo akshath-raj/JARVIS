@@ -56,13 +56,15 @@ def _clone_profile() -> str:
 def _effective_profile() -> tuple[str, bool, str | None]:
     """Return (user_data_dir, headless, blocker). blocker is a spoken message when we
     can't proceed (e.g. Chrome open and cloning disabled)."""
-    mode = (config.browser_clone_profile or "auto").lower()
+    mode = (config.browser_clone_profile or "never").lower()
     running = _chrome_running()
     if mode == "always" or (mode == "auto" and running):
-        return _clone_profile(), True, None  # headless clone, runs alongside Chrome
-    if running:  # mode == never (or auto but... running handled above) and Chrome open
+        # clone the profile and drive the copy; honor the headless setting (default
+        # visible) so the user can see it, instead of forcing a hidden window.
+        return _clone_profile(), config.browser_headless, None
+    if running:  # mode == never and Chrome is open → take over the real profile
         return config.browser_user_data_dir, config.browser_headless, \
-            "Sir, please close Google Chrome first so I can take over the browser."
+            "Sir, please close Google Chrome first so I can open it on your own profile."
     return config.browser_user_data_dir, config.browser_headless, None
 
 
