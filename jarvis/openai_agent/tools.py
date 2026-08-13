@@ -10,10 +10,18 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 
 from agents import function_tool
 
-from jarvis.browser_agent.client import run_browser_task
+_URL_RE = re.compile(r'https?://[^\s"\'<>)\]]+')
+
+
+def _first_url(text: str) -> str:
+    m = _URL_RE.search(text or "")
+    return m.group(0).rstrip('.,);') if m else ""
+
+from jarvis.browser_agent.client import run_browser_task, run_task_sync
 from jarvis.tools.browser import BrowserController, BrowserError
 from jarvis.tools.media import MediaController, MediaError
 from jarvis.tools.screen import ScreenController, ScreenError
@@ -299,20 +307,43 @@ def build_browser_tools(
             return f"error: {e}"
 
     @function_tool
+    async def watch_on_site(what: str, site: str = "netflix") -> str:
+        """Play a specific show / movie / video on a STREAMING site (Netflix, Prime
+        Video, Disney+, Hotstar, YouTube, …) on the user's OWN Chrome so DRM
+        playback actually works. JARVIS quietly finds the exact watch URL with the
+        background agent, then opens it in your real Chrome, which autoplays. Use for
+        "play <title> on <site>", "put on <show>", "continue watching <show> on
+        netflix", "play the <x> movie on prime". `what` = the title, `site` = the
+        streaming service (default netflix)."""
+        if (msg := _blocked(site)) or (msg := _blocked(what)):
+            return msg
+        instr = (f"Go to {site}. Find '{what}' (search if needed) and open the page "
+                 f"that PLAYS it — the watch/player page of the best-matching result. "
+                 f"Then reply with ONLY the full https URL of that watch/player page, "
+                 f"nothing else.")
+        res = await run_task_sync(instr, headless=True)  # quiet lookup on the clone
+        url = _first_url(res.get("result", "")) or _first_url(res.get("error", ""))
+        if not url:
+            return f"I couldn't find {what} on {site}, sir."
+        try:
+            await asyncio.to_thread(browser.open_url, url)  # open on the REAL Chrome → plays
+        except BrowserError as e:
+            return f"I found it but couldn't open it, sir: {e}"
+        memory.log_activity(f"opened {what} on {site} in real Chrome")
+        return f"Playing {what} on your Chrome now, sir."
+
+    @function_tool
     async def browser_task(instruction: str) -> str:
-        """Autonomously NAVIGATE and OPERATE any website to accomplish a goal — this
-        is how JARVIS actually *does things* on the web, not just open a page. It can
-        log in, choose a profile, search, click through pages, play or continue a
-        video/show/episode, scroll, fill and submit forms, book/order, download
-        files, and read account info. Use it for ANY request that goes beyond simply
-        opening a site, e.g.:
-          • "open Netflix and play the series I've been watching" / "play the next episode"
-          • "continue watching on Prime Video" / "put on <show> on Netflix"
+        """Autonomously NAVIGATE and OPERATE a website to accomplish a goal — this is
+        how JARVIS *does things* on the web (log in, search, click through pages, fill
+        and submit forms, book/order, download files, read account info). Use it for a
+        request that goes beyond simply opening a site, e.g.:
           • "search Amazon for <x> and open the first result" / "reorder my last order"
           • "log into VTOP and download my OS notes" / "check my AWS balance"
           • "find <thing> on <site> and <do something with it>"
-        Pass the user's COMPLETE request (site + what to do) as `instruction`; it runs
-        in the background and reports back when done. Prefer this over open_site
+        Do NOT use this to PLAY a show/movie on a streaming service — that's
+        watch_on_site (this agent can't play DRM video). Pass the user's COMPLETE
+        request as `instruction`; it runs in the background and reports back. Prefer this over open_site
         whenever the user wants an action performed on the site."""
         return await run_browser_task(instruction, announce=announce)
 
@@ -376,7 +407,7 @@ def build_browser_tools(
 
     tools = [open_site, play_youtube, latest_channel_video, open_reels, open_shorts]
     if browser_agent_enabled:
-        tools.append(browser_task)
+        tools += [watch_on_site, browser_task]
     if workspace is not None:
         tools += [download_and_explain, do_assignment, open_answer]
     if media is not None:

@@ -138,32 +138,36 @@ def _job(instruction: str, files=None, frontier_only: bool = False,
 
 
 async def _run_job(instruction: str, *, files=None, frontier_only: bool, timeout: int,
-                   attach: bool = False) -> dict:
+                   attach: bool = False, headless: bool | None = None) -> dict:
     """Run the job. `attach` (interactive tasks) drives the user's real VISIBLE Chrome
-    via CDP so they can see it; otherwise use the profile/clone path (background)."""
+    via CDP so they can see it; otherwise use the profile/clone path (background).
+    `headless` overrides the visibility for a purely background step (e.g. quietly
+    looking up a watch URL)."""
     if attach and config.browser_attach_real:
         cdp_url, blocker = await asyncio.to_thread(_ensure_real_chrome)
         if blocker:
             return {"ok": False, "result": "", "error": blocker}
         job = _job(instruction, files=files, frontier_only=frontier_only, cdp_url=cdp_url)
         return await _spawn(job, timeout)
-    udd, headless, blocker = await asyncio.to_thread(_effective_profile)
+    udd, eff_headless, blocker = await asyncio.to_thread(_effective_profile)
     if blocker:
         return {"ok": False, "result": "", "error": blocker}
     job = _job(instruction, files=files, frontier_only=frontier_only,
-               user_data_dir=udd, headless=headless)
+               user_data_dir=udd, headless=eff_headless if headless is None else headless)
     return await _spawn(job, timeout)
 
 
-async def run_task_sync(instruction: str, *, files=None, timeout: int | None = None) -> dict:
+async def run_task_sync(instruction: str, *, files=None, timeout: int | None = None,
+                        headless: bool | None = None) -> dict:
     """Run a browser task and RETURN its result dict (no fire-and-report).
 
-    Used by higher-level flows (download an assignment, drive claude.ai to answer)
-    that need the outcome to continue. Serialised via the same single-flight lock.
+    Used by higher-level flows (download an assignment, look up a watch URL, drive
+    claude.ai to answer) that need the outcome to continue. `headless=True` runs it
+    quietly in the background. Serialised via the same single-flight lock.
     """
     async with _lock:
         return await _run_job(instruction, files=files, frontier_only=True,
-                              timeout=timeout or config.browser_timeout)
+                              timeout=timeout or config.browser_timeout, headless=headless)
 
 
 async def run_browser_task(instruction: str, *, announce=None) -> str:

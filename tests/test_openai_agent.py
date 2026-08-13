@@ -181,6 +181,17 @@ def test_explain_this_present_with_rag_and_is_document_aware():
     assert "explain_this" not in without
 
 
+def test_watch_on_site_registered_and_url_extraction():
+    """Streaming playback tool exists, and the watch-URL is pulled from agent text."""
+    from jarvis.openai_agent.tools import _first_url, build_browser_tools
+
+    names = {t.name for t in build_browser_tools(browser=object(), memory=_FakeMemory())}
+    assert "watch_on_site" in names and "browser_task" in names
+    assert _first_url("Sure — https://www.netflix.com/watch/70136120 for you.") \
+        == "https://www.netflix.com/watch/70136120"
+    assert _first_url("no link here") == ""
+
+
 def test_files_tools_open_and_find_by_description():
     """Opening/asking a document by free-text description (no exact filename)."""
     from jarvis.openai_agent.tools import build_files_tools
