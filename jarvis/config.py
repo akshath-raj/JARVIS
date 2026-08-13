@@ -213,13 +213,15 @@ class Config:
     )
     browser_profile_dir: str = os.getenv("JARVIS_BROWSER_PROFILE", "Default")
     # A Chrome profile dir can only be used by ONE Chrome process at a time.
-    #   never (default) = always drive your REAL Chrome profile in a VISIBLE window;
-    #     if Chrome is already open, JARVIS asks you to close it first so it can take
-    #     over. This is what you want to actually see and use what it opens.
-    #   auto = clone the profile (cookies/logins) into a copy and drive that when your
-    #     Chrome is open, so a task can run alongside it; else uses the real profile.
-    #   always = always clone. The clone honors JARVIS_BROWSER_HEADLESS.
-    browser_clone_profile: str = os.getenv("JARVIS_BROWSER_CLONE_PROFILE", "never")
+    # Chrome 136+ DISABLES remote automation on the *default* profile, and browser-use
+    # drives Chrome over that same protocol — so the agent can only run on a CLONE of
+    # your profile (a copy in a non-default dir, with your cookies/logins) in a VISIBLE
+    # window. That's the reliable mode.
+    #   always (default) = always drive a visible clone (works whether or not Chrome
+    #     is open); honors JARVIS_BROWSER_HEADLESS (visible by default).
+    #   auto = clone only when your Chrome is open; never = try the real profile
+    #     (won't work for automation on modern Chrome — kept for non-default setups).
+    browser_clone_profile: str = os.getenv("JARVIS_BROWSER_CLONE_PROFILE", "always")
     browser_clone_dir: str = os.path.expanduser(
         os.getenv("JARVIS_BROWSER_CLONE_DIR", "~/.jarvis/chrome-clone")
     )
@@ -228,14 +230,11 @@ class Config:
     browser_local_max_steps: int = int(os.getenv("JARVIS_BROWSER_LOCAL_MAX_STEPS", "12"))
     browser_timeout: int = int(os.getenv("JARVIS_BROWSER_TIMEOUT", "240"))
     browser_headless: bool = _truthy(os.getenv("JARVIS_BROWSER_HEADLESS", "0"))
-    # DevTools port JARVIS uses to drive your REAL, VISIBLE Chrome (so "open Netflix
-    # and play my show" happens on your own profile, in front of you — not a hidden
-    # clone). If Chrome is already open without this port, JARVIS asks you to quit it
-    # once so it can relaunch it under control (your tabs restore).
+    # Attaching to your REAL default Chrome profile via this DevTools port does NOT
+    # work on Chrome 136+ (Google disabled debugging on the default profile). Left
+    # OFF by default; only useful if you run Chrome on a NON-default profile.
     browser_debug_port: int = int(os.getenv("JARVIS_BROWSER_DEBUG_PORT", "9222"))
-    # Interactive voice browser tasks drive your real visible Chrome via the port
-    # above. Set 0 to always use the background clone/headless path instead.
-    browser_attach_real: bool = _truthy(os.getenv("JARVIS_BROWSER_ATTACH_REAL", "1"))
+    browser_attach_real: bool = _truthy(os.getenv("JARVIS_BROWSER_ATTACH_REAL", "0"))
     # Auto-solve captchas that block a task, using a LOCAL open-source vision model
     # (Qwen2.5-VL via Ollama) — no third-party service. Needs: ollama pull qwen2.5vl:7b.
     captcha_enabled: bool = _truthy(os.getenv("JARVIS_BROWSER_CAPTCHA", "1"))
