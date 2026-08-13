@@ -181,15 +181,13 @@ def test_explain_this_present_with_rag_and_is_document_aware():
     assert "explain_this" not in without
 
 
-def test_watch_on_site_registered_and_url_extraction():
-    """Streaming playback tool exists, and the watch-URL is pulled from agent text."""
-    from jarvis.openai_agent.tools import _first_url, build_browser_tools
+def test_browser_task_registered():
+    """The multi-step browser task tool is present (no separate streaming tool)."""
+    from jarvis.openai_agent.tools import build_browser_tools
 
     names = {t.name for t in build_browser_tools(browser=object(), memory=_FakeMemory())}
-    assert "watch_on_site" in names and "browser_task" in names
-    assert _first_url("Sure — https://www.netflix.com/watch/70136120 for you.") \
-        == "https://www.netflix.com/watch/70136120"
-    assert _first_url("no link here") == ""
+    assert "browser_task" in names
+    assert "watch_on_site" not in names
 
 
 def test_files_tools_open_and_find_by_description():
@@ -219,3 +217,23 @@ def test_adapter_chat_ctx_conversion():
         {"role": "user", "content": "louder"},
     ]
     assert _last_user_text(items) == "louder"
+
+
+def test_clean_strips_leaked_tool_json_and_harmony_tokens():
+    """The spoken text must never contain leaked tool-call JSON or gpt-oss harmony
+    control tokens — but real prose (incl. brace literals) stays intact."""
+    from jarvis.openai_agent.adapter import _clean
+
+    # tool-call JSON printed as text is removed, surrounding prose kept
+    assert _clean('The slide is a PDF.{"tool":"takescreenshot","arguments":{}}It shows notes.') \
+        == "The slide is a PDF.It shows notes."
+    assert _clean('Here you go, sir. {"name":"web_search","arguments":{"query":"x"}}') \
+        == "Here you go, sir."
+    # harmony channel/control tokens are stripped
+    assert _clean("<|channel|>commentary<|message|>Playing now, sir.") == "Playing now, sir."
+    assert _clean("<|start|>assistant<|channel|>final<|message|>Paused, sir.<|end|>") == "Paused, sir."
+    assert _clean("Done <tool_call>{\"tool\":\"pause_music\"}</tool_call> paused, sir.") \
+        == "Done paused, sir."
+    # legitimate prose (a real word, a brace literal) is left alone
+    assert _clean("I have no commentary on that, sir.") == "I have no commentary on that, sir."
+    assert _clean("Kept {a literal} and math {x:1} intact.") == "Kept {a literal} and math {x:1} intact."

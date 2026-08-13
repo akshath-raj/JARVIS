@@ -150,7 +150,10 @@ class ScreenController:
             "use plain prose (no markdown). Question: " + prompt
         )
         try:
-            resp = self._vision_call(instruction, b64, max_output=700)
+            # Cerebras Gemma emits a hidden reasoning block BEFORE the answer that
+            # eats into the token budget — a tight cap truncates the answer to a
+            # generic stub. Give it ample room so the real description survives.
+            resp = self._vision_call(instruction, b64, max_output=1600)
         except Exception as e:  # network / API / auth error
             raise ScreenError(f"vision model error: {e}") from e
 
@@ -206,7 +209,8 @@ class ScreenController:
             + (f"The user asked: {question!r}. " if question else "")
         )
         try:
-            resp = self._vision_call(instruction, b64, max_output=400)
+            # Room for Gemma's reasoning block + the JSON payload (see analyse()).
+            resp = self._vision_call(instruction, b64, max_output=1200)
         except Exception as e:  # network / API / auth error
             raise ScreenError(f"vision model error: {e}") from e
 

@@ -10,18 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import random
-import re
 
 from agents import function_tool
 
-_URL_RE = re.compile(r'https?://[^\s"\'<>)\]]+')
-
-
-def _first_url(text: str) -> str:
-    m = _URL_RE.search(text or "")
-    return m.group(0).rstrip('.,);') if m else ""
-
-from jarvis.browser_agent.client import run_browser_task, run_task_sync
+from jarvis.browser_agent.client import run_browser_task
 from jarvis.tools.browser import BrowserController, BrowserError
 from jarvis.tools.media import MediaController, MediaError
 from jarvis.tools.screen import ScreenController, ScreenError
@@ -237,13 +229,8 @@ def build_browser_tools(
 
     @function_tool
     async def open_site(name: str) -> str:
-        """Open a website's LANDING PAGE in Chrome by name or URL — and nothing more.
-        It does NOT log in, choose a profile, search, click, navigate, or play
-        anything. Use ONLY when the user just wants a site opened with no further
-        action: "open gmail", "go to github", "open twitter". If the user wants to DO
-        something on the site (play a show, continue watching, search and open a
-        result, log in and fetch something, navigate to a specific page), use
-        browser_task instead — do NOT use open_site for that."""
+        """Open a website or web app in Chrome by name (youtube, instagram, gmail,
+        github, netflix, …) or a URL. Unknown names are searched on Google."""
         if (msg := _blocked(name)):
             return msg
         def _do():
@@ -307,44 +294,12 @@ def build_browser_tools(
             return f"error: {e}"
 
     @function_tool
-    async def watch_on_site(what: str, site: str = "netflix") -> str:
-        """Play a specific show / movie / video on a STREAMING site (Netflix, Prime
-        Video, Disney+, Hotstar, YouTube, …) on the user's OWN Chrome so DRM
-        playback actually works. JARVIS quietly finds the exact watch URL with the
-        background agent, then opens it in your real Chrome, which autoplays. Use for
-        "play <title> on <site>", "put on <show>", "continue watching <show> on
-        netflix", "play the <x> movie on prime". `what` = the title, `site` = the
-        streaming service (default netflix)."""
-        if (msg := _blocked(site)) or (msg := _blocked(what)):
-            return msg
-        instr = (f"Go to {site}. Find '{what}' (search if needed) and open the page "
-                 f"that PLAYS it — the watch/player page of the best-matching result. "
-                 f"Then reply with ONLY the full https URL of that watch/player page, "
-                 f"nothing else.")
-        res = await run_task_sync(instr, headless=True)  # quiet lookup on the clone
-        url = _first_url(res.get("result", "")) or _first_url(res.get("error", ""))
-        if not url:
-            return f"I couldn't find {what} on {site}, sir."
-        try:
-            await asyncio.to_thread(browser.open_url, url)  # open on the REAL Chrome → plays
-        except BrowserError as e:
-            return f"I found it but couldn't open it, sir: {e}"
-        memory.log_activity(f"opened {what} on {site} in real Chrome")
-        return f"Playing {what} on your Chrome now, sir."
-
-    @function_tool
     async def browser_task(instruction: str) -> str:
-        """Autonomously NAVIGATE and OPERATE a website to accomplish a goal — this is
-        how JARVIS *does things* on the web (log in, search, click through pages, fill
-        and submit forms, book/order, download files, read account info). Use it for a
-        request that goes beyond simply opening a site, e.g.:
-          • "search Amazon for <x> and open the first result" / "reorder my last order"
-          • "log into VTOP and download my OS notes" / "check my AWS balance"
-          • "find <thing> on <site> and <do something with it>"
-        Do NOT use this to PLAY a show/movie on a streaming service — that's
-        watch_on_site (this agent can't play DRM video). Pass the user's COMPLETE
-        request as `instruction`; it runs in the background and reports back. Prefer this over open_site
-        whenever the user wants an action performed on the site."""
+        """Perform a multi-step task on a website that requires logging in,
+        navigating, searching, downloading files, or reading specific account
+        info (e.g. "download the OS study materials by Professor X from VTOP",
+        "check the balance on my AWS account", "find my latest Amazon order"). Do
+        NOT use this to merely open a website (use open_site)."""
         return await run_browser_task(instruction, announce=announce)
 
     @function_tool
@@ -407,7 +362,7 @@ def build_browser_tools(
 
     tools = [open_site, play_youtube, latest_channel_video, open_reels, open_shorts]
     if browser_agent_enabled:
-        tools += [watch_on_site, browser_task]
+        tools.append(browser_task)
     if workspace is not None:
         tools += [download_and_explain, do_assignment, open_answer]
     if media is not None:
@@ -420,14 +375,17 @@ def build_screen_tools(*, screen: ScreenController, memory, ui=None, rag=None) -
     @function_tool
     async def explain_screen(question: str = "", show_in_ui: bool = False) -> str:
         """Take a screenshot of the user's screen and explain what's on it, in
-        detail. Use whenever the user asks about what is CURRENTLY displayed /
-        open / shown on their screen (e.g. "what's on my screen", "explain in
-        detail what I'm looking at", "read this for me", "explain this formula",
-        "what does this error mean"). Pass the user's specific question as
-        `question` (empty = describe everything). Set show_in_ui=true when the user
-        asks to SHOW / OPEN / DISPLAY the explanation on the dashboard/UI/screen —
-        it will render the captured screen and the full analysis on the HUD. Return
-        the explanation to the user in full — do not shorten it."""
+        detail. This is the ONE tool for any request to look at / read / describe /
+        explain the screen — including "take a screenshot AND tell me what's there",
+        "screenshot this and explain it", "what's on my screen", "read this for me",
+        "explain this formula", "what does this error mean". It captures the screen
+        AND analyses it with the vision model, then returns the real description —
+        so NEVER answer such a request from your own guess, and never use
+        take_screenshot for it. Pass the user's specific question as `question`
+        (empty = describe everything). Set show_in_ui=true when the user asks to
+        SHOW / OPEN / DISPLAY the explanation on the dashboard/UI/screen — it will
+        render the captured screen and the full analysis on the HUD. Return the
+        explanation to the user in full — do not shorten it."""
         def _do():
             if show_in_ui and ui is not None:
                 ans, img = screen.analyse(question)
@@ -446,8 +404,12 @@ def build_screen_tools(*, screen: ScreenController, memory, ui=None, rag=None) -
 
     @function_tool
     async def take_screenshot() -> str:
-        """Take a screenshot of the screen and save it, without analysing it. Use
-        only when the user just wants a screenshot captured."""
+        """Save a raw screenshot to a file WITHOUT looking at it. Use ONLY when the
+        user explicitly wants a screenshot file saved and nothing explained (e.g.
+        "save a screenshot", "capture my screen to a file", "grab a screenshot for
+        later"). This tool does NOT look at the screen, so NEVER use it to answer,
+        describe, read, or explain what is shown — use explain_screen for anything
+        that involves understanding the screen."""
         try:
             path = await asyncio.to_thread(screen.capture)
             return f"screenshot saved to {path}"

@@ -87,7 +87,7 @@ class Config:
         ).split(",")
         if w.strip()
     )
-    wake_followup_seconds: float = float(os.getenv("JARVIS_WAKE_FOLLOWUP", "20"))
+    wake_followup_seconds: float = float(os.getenv("JARVIS_WAKE_FOLLOWUP", "5"))
     # After a normal (non-question) answer, optionally stay awake briefly so
     # back-to-back commands work without repeating the wake word. OFF by default:
     # when music/video plays through SPEAKERS the mic transcribes it as fake user
@@ -212,16 +212,12 @@ class Config:
         os.getenv("JARVIS_BROWSER_USER_DATA_DIR", "~/Library/Application Support/Google/Chrome")
     )
     browser_profile_dir: str = os.getenv("JARVIS_BROWSER_PROFILE", "Default")
-    # A Chrome profile dir can only be used by ONE Chrome process at a time.
-    # Chrome 136+ DISABLES remote automation on the *default* profile, and browser-use
-    # drives Chrome over that same protocol — so the agent can only run on a CLONE of
-    # your profile (a copy in a non-default dir, with your cookies/logins) in a VISIBLE
-    # window. That's the reliable mode.
-    #   always (default) = always drive a visible clone (works whether or not Chrome
-    #     is open); honors JARVIS_BROWSER_HEADLESS (visible by default).
-    #   auto = clone only when your Chrome is open; never = try the real profile
-    #     (won't work for automation on modern Chrome — kept for non-default setups).
-    browser_clone_profile: str = os.getenv("JARVIS_BROWSER_CLONE_PROFILE", "always")
+    # A Chrome profile dir can only be used by ONE Chrome process at a time. To run
+    # headless in the background WHILE your Chrome is open, JARVIS clones the profile
+    # (cookies/logins, minus caches) to its own dir and drives that copy.
+    #   auto (default) = clone only when Chrome is running; else use the real profile.
+    #   always = always clone (headless); never = require Chrome closed (no clone).
+    browser_clone_profile: str = os.getenv("JARVIS_BROWSER_CLONE_PROFILE", "auto")
     browser_clone_dir: str = os.path.expanduser(
         os.getenv("JARVIS_BROWSER_CLONE_DIR", "~/.jarvis/chrome-clone")
     )
@@ -230,11 +226,6 @@ class Config:
     browser_local_max_steps: int = int(os.getenv("JARVIS_BROWSER_LOCAL_MAX_STEPS", "12"))
     browser_timeout: int = int(os.getenv("JARVIS_BROWSER_TIMEOUT", "240"))
     browser_headless: bool = _truthy(os.getenv("JARVIS_BROWSER_HEADLESS", "0"))
-    # Attaching to your REAL default Chrome profile via this DevTools port does NOT
-    # work on Chrome 136+ (Google disabled debugging on the default profile). Left
-    # OFF by default; only useful if you run Chrome on a NON-default profile.
-    browser_debug_port: int = int(os.getenv("JARVIS_BROWSER_DEBUG_PORT", "9222"))
-    browser_attach_real: bool = _truthy(os.getenv("JARVIS_BROWSER_ATTACH_REAL", "0"))
     # Auto-solve captchas that block a task, using a LOCAL open-source vision model
     # (Qwen2.5-VL via Ollama) — no third-party service. Needs: ollama pull qwen2.5vl:7b.
     captcha_enabled: bool = _truthy(os.getenv("JARVIS_BROWSER_CAPTCHA", "1"))

@@ -25,8 +25,7 @@ def _cfg(**over):
         browser_local_model="qwen2.5:7b-instruct", browser_local_max_steps=12,
         browser_frontier_model="gpt-4.1-mini", ollama_base_url="http://localhost:11434/v1",
         browser_max_steps=40, browser_timeout=240, captcha_enabled=True, captcha_model="qwen2.5vl:7b",
-        browser_clone_profile="never", browser_clone_dir="/tmp/jarvis-clone-test",
-        browser_attach_real=True, browser_debug_port=9222,
+        browser_clone_profile="auto", browser_clone_dir="/tmp/jarvis-clone-test",
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -41,42 +40,18 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_interactive_attaches_to_real_visible_chrome(monkeypatch):
-    # A voice task drives the user's REAL, VISIBLE Chrome via CDP (job carries a
-    # cdp_url), not a clone — so they can see and keep it.
-    monkeypatch.setattr(client, "config", _cfg())
-    monkeypatch.setattr(client, "_cdp_up", lambda port: f"http://127.0.0.1:{port}")  # debuggable Chrome already up
-    monkeypatch.setattr(client.os.path, "exists", lambda p: True)
-    sent = {}
-
-    class FakeProc:
-        async def communicate(self, data):
-            sent["job"] = json.loads(data.decode())
-            return (json.dumps({"ok": True, "result": "playing your show"}).encode(), b"")
-
-    async def fake_exec(*a, **k):
-        return FakeProc()
-
-    monkeypatch.setattr(client.asyncio, "create_subprocess_exec", fake_exec)
-    out = _run(client._execute("open netflix and play my show"))
-    assert out == "playing your show"
-    assert sent["job"]["cdp_url"] == "http://127.0.0.1:9222"
-
-
-def test_interactive_asks_to_quit_chrome_when_not_debuggable(monkeypatch):
-    # Chrome open WITHOUT the debug port → ask the user to quit it once so JARVIS can
-    # relaunch it under control on their real profile.
-    monkeypatch.setattr(client, "config", _cfg())
-    monkeypatch.setattr(client, "_cdp_up", lambda port: None)   # no debuggable Chrome
+def test_chrome_open_aborts_in_never_mode(monkeypatch):
+    # In 'never' clone mode, an open Chrome blocks (no cloning).
+    monkeypatch.setattr(client, "config", _cfg(browser_clone_profile="never"))
     monkeypatch.setattr(client, "_chrome_running", lambda: True)
     monkeypatch.setattr(client.os.path, "exists", lambda p: True)
-    out = _run(client._execute("open netflix and play my show"))
-    assert "quit" in out.lower() and "chrome" in out.lower()
+    out = _run(client._execute("check my aws balance"))
+    assert "close" in out.lower() and "chrome" in out.lower()
 
 
-def test_background_flow_uses_clone_when_chrome_open(monkeypatch):
-    # Background sync flows (assignments) still use the profile/clone path (attach off).
-    monkeypatch.setattr(client, "config", _cfg(browser_clone_profile="auto"))
+def test_chrome_open_clones_in_auto_mode(monkeypatch):
+    # In 'auto' mode with Chrome open, it clones the profile (headless) instead of aborting.
+    monkeypatch.setattr(client, "config", _cfg())
     monkeypatch.setattr(client, "_chrome_running", lambda: True)
     monkeypatch.setattr(client, "_clone_profile", lambda: "/tmp/clone")
     monkeypatch.setattr(client.os.path, "exists", lambda p: True)
@@ -85,20 +60,20 @@ def test_background_flow_uses_clone_when_chrome_open(monkeypatch):
     class FakeProc:
         async def communicate(self, data):
             sent["job"] = json.loads(data.decode())
-            return (json.dumps({"ok": True, "result": "the answer"}).encode(), b"")
+            return (json.dumps({"ok": True, "result": "aws balance $5"}).encode(), b"")
 
     async def fake_exec(*a, **k):
         return FakeProc()
 
     monkeypatch.setattr(client.asyncio, "create_subprocess_exec", fake_exec)
-    res = _run(client.run_task_sync("do the assignment"))
-    assert res["result"] == "the answer"
-    assert sent["job"]["user_data_dir"] == "/tmp/clone" and sent["job"]["cdp_url"] is None
+    out = _run(client._execute("check my aws balance"))
+    assert out == "aws balance $5"
+    assert sent["job"]["user_data_dir"] == "/tmp/clone" and sent["job"]["headless"] is True
 
 
 def test_execute_spawns_subprocess_and_parses(monkeypatch):
     monkeypatch.setattr(client, "config", _cfg())
-    monkeypatch.setattr(client, "_cdp_up", lambda port: f"http://127.0.0.1:{port}")  # attach, don't launch Chrome
+    monkeypatch.setattr(client, "_chrome_running", lambda: False)
     monkeypatch.setattr(client.os.path, "exists", lambda p: True)
 
     sent = {}
@@ -123,7 +98,7 @@ def test_execute_spawns_subprocess_and_parses(monkeypatch):
 
 def test_execute_timeout_kills(monkeypatch):
     monkeypatch.setattr(client, "config", _cfg())
-    monkeypatch.setattr(client, "_cdp_up", lambda port: f"http://127.0.0.1:{port}")  # attach, don't launch Chrome
+    monkeypatch.setattr(client, "_chrome_running", lambda: False)
     monkeypatch.setattr(client.os.path, "exists", lambda p: True)
 
     killed = {"v": False}

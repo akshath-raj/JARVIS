@@ -90,6 +90,38 @@ def test_stop_when_inactive():
     assert "isn't on" in f.stop()
 
 
+def test_sweep_kills_lingering_profile_clone():
+    """A second (browser-agent) clone Chrome blinds the AppleScript sweep, so focus
+    quits it on every sweep — both on start and while watching for reopens."""
+    async def run():
+        killed = []
+        closer = FakeCloser(["youtube.com"])
+        f = FocusController(
+            closer=closer, poll_seconds=0.02, minute=0.001,
+            clone_dir="/Users/x/.jarvis/chrome-clone",
+            clone_killer=lambda d: killed.append(d) or True,
+        )
+        await f.start("pomodoro")
+        assert killed and killed[0] == "/Users/x/.jarvis/chrome-clone"
+        before = len(killed)
+        await asyncio.sleep(0.1)          # watch loop keeps quitting the clone
+        assert len(killed) > before
+        f.stop()
+    asyncio.run(run())
+
+
+def test_no_clone_dir_skips_kill():
+    """With no clone dir configured, focus never tries to kill a clone."""
+    async def run():
+        killed = []
+        f = FocusController(closer=lambda s: [], minute=0.001,
+                            clone_killer=lambda d: killed.append(d) or True)
+        await f.start("pomodoro")
+        assert killed == []
+        f.stop()
+    asyncio.run(run())
+
+
 def test_focus_pushes_to_ui_state():
     from jarvis.ui.controller import UIController
 

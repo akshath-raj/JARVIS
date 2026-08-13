@@ -65,11 +65,17 @@ class FocusController:
     def __init__(self, *, announce=None, closer=None, app_closer=None, ui=None,
                  extra_sites: tuple[str, ...] = (), block_apps: tuple[str, ...] = (),
                  poll_seconds: float = 3, default_technique: str = "pomodoro",
-                 minute: float = 60.0) -> None:
+                 minute: float = 60.0, clone_dir: str = "", clone_killer=None) -> None:
         self._announce = announce                         # async callable(text)
         self._ui = ui                                     # UIController (optional)
         self._closer = closer or _close_distraction_tabs  # (sites) -> list[str] hosts closed
         self._app_closer = app_closer or _quit_apps       # (apps) -> list[str] quit
+        # A second Chrome instance (the browser-agent's visible profile CLONE)
+        # blinds the AppleScript tab-sweep — Apple Events target the wrong instance,
+        # so distractions never get closed. In focus mode we quit that clone so the
+        # user's real Chrome is the only one, and the sweep can see (and close) tabs.
+        self._clone_dir = clone_dir
+        self._clone_killer = clone_killer or _kill_clone_chrome
         self._sites = tuple(dict.fromkeys(_DEFAULT_SITES + tuple(extra_sites)))
         self._apps = tuple(a for a in block_apps if a)
         self._poll = max(0.02, float(poll_seconds))
@@ -168,6 +174,13 @@ class FocusController:
     # ── enforcement ───────────────────────────────────────────────────────────
     def _sweep(self) -> list[str]:
         """Close all open distraction tabs (+ blocked apps). Returns hosts closed."""
+        # First remove any lingering JARVIS profile-clone Chrome — a second Chrome
+        # instance makes the AppleScript sweep target the wrong app and close nothing.
+        if self._clone_dir:
+            try:
+                self._clone_killer(self._clone_dir)
+            except Exception as e:
+                logger.debug("clone-chrome kill failed: %s", e)
         try:
             closed = list(self._closer(self._sites))
         except Exception as e:  # never let a shell hiccup break focus mode
@@ -207,6 +220,11 @@ class FocusController:
             await asyncio.sleep(self._poll)
 
     def _sweep_quiet(self) -> list[str]:
+        if self._clone_dir:
+            try:
+                self._clone_killer(self._clone_dir)
+            except Exception as e:
+                logger.debug("clone-chrome kill failed: %s", e)
         try:
             return list(self._closer(self._sites))
         except Exception as e:
@@ -325,6 +343,28 @@ def _close_distraction_tabs(sites: tuple[str, ...], app: str = "Google Chrome") 
     )
     out = _run_osa(script)
     return [h for h in out.split(",") if h]
+
+
+def _kill_clone_chrome(clone_dir: str) -> bool:
+    """Terminate any Chrome launched against JARVIS's profile-clone user-data-dir.
+
+    The browser agent can leave a *second*, visible clone Chrome running. While it's
+    up, `tell application "Google Chrome"` routes Apple Events to the wrong instance
+    and the focus tab-sweep sees zero tabs — so distractions never close. Quitting
+    the clone leaves only the user's real Chrome, which the sweep can control.
+    Returns True if anything was killed. No-op if no clone is running.
+    """
+    clone_dir = (clone_dir or "").rstrip("/")
+    if not clone_dir:
+        return False
+    try:
+        # Match the whole Chrome process tree (main + helpers) for the clone dir.
+        r = subprocess.run(["pkill", "-f", f"--user-data-dir={clone_dir}"],
+                           capture_output=True, timeout=5)
+        return r.returncode == 0     # 0 = at least one process signalled
+    except Exception as e:
+        logger.debug("pkill clone chrome failed: %s", e)
+        return False
 
 
 def _quit_apps(apps: tuple[str, ...]) -> list[str]:

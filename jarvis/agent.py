@@ -167,6 +167,7 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
             block_apps=tuple(a.strip() for a in config.focus_block_apps.split(",") if a.strip()),
             poll_seconds=config.focus_poll_seconds,
             default_technique=config.focus_default_technique,
+            clone_dir=config.browser_clone_dir,
         )
 
     # ── HUD inbound commands (alarm buttons, end-focus button) ─────────────

@@ -60,10 +60,49 @@ def _last_user_text(items: list[dict]) -> str:
 
 # strip markdown emphasis/heading/code characters so TTS never speaks "asterisk"
 _MD = re.compile(r"[*_`#]+")
+# gpt-oss "harmony" control tokens + stray tool-call tags that sometimes leak into
+# the assistant's spoken text instead of being parsed as a real tool call. A control
+# token is often followed by a bare channel/role word (analysis/commentary/final/…);
+# strip that too so it isn't spoken.
+_CTRL = re.compile(
+    r"<\|[^|>]*\|>\s*(?:analysis|commentary|final|assistant|developer|system|user)?",
+    re.I,
+)
+_TOOLTAG = re.compile(r"</?(tool_call|function_call|function|tool)\b[^>]*>", re.I)
+# Keys that mark a leaked tool-call JSON object (e.g. {"tool":"take_screenshot", …}).
+_TOOL_KEYS = ('"tool"', '"name"', '"function"', '"arguments"', '"parameters"', '"recipient"')
+
+
+def _strip_tool_json(text: str) -> str:
+    """Remove any balanced {...} object that looks like a leaked tool call, leaving
+    the surrounding prose intact (the model sometimes prints the call as text)."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        if text[i] == "{":
+            depth, j = 0, i
+            while j < n:
+                if text[j] == "{":
+                    depth += 1
+                elif text[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            if j < n and any(k in text[i:i + 48] for k in _TOOL_KEYS):
+                i = j + 1                       # drop the whole tool-call object
+                continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
 
 
 def _clean(text: str) -> str:
-    return _MD.sub("", text or "")
+    t = _strip_tool_json(text or "")
+    t = _CTRL.sub(" ", t)
+    t = _TOOLTAG.sub(" ", t)
+    t = _MD.sub("", t)
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    return re.sub(r"\n{3,}", "\n\n", t).strip()
 
 
 class _AgentsStream(llm.LLMStream):

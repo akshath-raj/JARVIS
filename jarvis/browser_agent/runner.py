@@ -68,25 +68,14 @@ async def _run(job: dict) -> dict:
         except Exception as e:  # noqa: BLE001
             _log(f"captcha tools unavailable: {e}")
 
-    headless = bool(job.get("headless", False))
-    cdp_url = job.get("cdp_url")
-    if cdp_url:
-        # Attach to the user's already-running, VISIBLE Chrome (real profile). We
-        # never launched it, so we never close it — the user keeps their browser.
-        _log(f"attaching to real Chrome via CDP {cdp_url}")
-        browser = Browser(cdp_url=cdp_url)
-    else:
-        browser = Browser(
-            executable_path=job["chrome_path"],
-            user_data_dir=os.path.expanduser(job["user_data_dir"]),
-            profile_directory=job.get("profile_directory", "Default"),
-            headless=headless,
-            # a VISIBLE launched run stays open so the user can keep using it;
-            # only a headless/background run is torn down below.
-            keep_alive=not headless,
-            accept_downloads=True,
-            downloads_path=os.path.expanduser(job.get("downloads_dir", "~/Downloads")),
-        )
+    browser = Browser(
+        executable_path=job["chrome_path"],
+        user_data_dir=os.path.expanduser(job["user_data_dir"]),
+        profile_directory=job.get("profile_directory", "Default"),
+        headless=bool(job.get("headless", False)),
+        accept_downloads=True,
+        downloads_path=os.path.expanduser(job.get("downloads_dir", "~/Downloads")),
+    )
     try:
         # 1) Local attempt (private, no vision).
         if job.get("local_model"):
@@ -112,19 +101,16 @@ async def _run(job: dict) -> dict:
     except Exception as e:  # noqa: BLE001
         result["error"] = f"{type(e).__name__}: {e}"
     finally:
-        # Never close the user's attached Chrome or a visible launched window; only
-        # tear down a headless/background browser we launched ourselves.
-        if not cdp_url and headless:
-            for closer in ("stop", "close", "kill"):
-                fn = getattr(browser, closer, None)
-                if callable(fn):
-                    try:
-                        res = fn()
-                        if asyncio.iscoroutine(res):
-                            await res
-                        break
-                    except Exception:  # noqa: BLE001
-                        continue
+        for closer in ("stop", "close", "kill"):
+            fn = getattr(browser, closer, None)
+            if callable(fn):
+                try:
+                    res = fn()
+                    if asyncio.iscoroutine(res):
+                        await res
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
     return result
 
 
