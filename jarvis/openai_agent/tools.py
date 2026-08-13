@@ -229,8 +229,13 @@ def build_browser_tools(
 
     @function_tool
     async def open_site(name: str) -> str:
-        """Open a website or web app in Chrome by name (youtube, instagram, gmail,
-        github, netflix, …) or a URL. Unknown names are searched on Google."""
+        """Open a website's LANDING PAGE in Chrome by name or URL — and nothing more.
+        It does NOT log in, choose a profile, search, click, navigate, or play
+        anything. Use ONLY when the user just wants a site opened with no further
+        action: "open gmail", "go to github", "open twitter". If the user wants to DO
+        something on the site (play a show, continue watching, search and open a
+        result, log in and fetch something, navigate to a specific page), use
+        browser_task instead — do NOT use open_site for that."""
         if (msg := _blocked(name)):
             return msg
         def _do():
@@ -295,11 +300,20 @@ def build_browser_tools(
 
     @function_tool
     async def browser_task(instruction: str) -> str:
-        """Perform a multi-step task on a website that requires logging in,
-        navigating, searching, downloading files, or reading specific account
-        info (e.g. "download the OS study materials by Professor X from VTOP",
-        "check the balance on my AWS account", "find my latest Amazon order"). Do
-        NOT use this to merely open a website (use open_site)."""
+        """Autonomously NAVIGATE and OPERATE any website to accomplish a goal — this
+        is how JARVIS actually *does things* on the web, not just open a page. It can
+        log in, choose a profile, search, click through pages, play or continue a
+        video/show/episode, scroll, fill and submit forms, book/order, download
+        files, and read account info. Use it for ANY request that goes beyond simply
+        opening a site, e.g.:
+          • "open Netflix and play the series I've been watching" / "play the next episode"
+          • "continue watching on Prime Video" / "put on <show> on Netflix"
+          • "search Amazon for <x> and open the first result" / "reorder my last order"
+          • "log into VTOP and download my OS notes" / "check my AWS balance"
+          • "find <thing> on <site> and <do something with it>"
+        Pass the user's COMPLETE request (site + what to do) as `instruction`; it runs
+        in the background and reports back when done. Prefer this over open_site
+        whenever the user wants an action performed on the site."""
         return await run_browser_task(instruction, announce=announce)
 
     @function_tool
