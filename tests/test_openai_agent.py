@@ -112,12 +112,37 @@ def _build():
 
 
 def test_brain_is_single_fast_agent():
-    """One agent, no handoffs — a command is a single API call (voice latency)."""
+    """One agent, no handoffs — device actions resolve in a single API call, while
+    informational tools keep the loop open so compound requests complete."""
     agent, _ = _build()
     assert agent.name == "JARVIS"
     assert agent.handoffs == []
-    # stop_on_first_tool → the tool result is spoken directly, no extra LLM call
-    assert agent.tool_use_behavior == "stop_on_first_tool"
+    # a policy (callable) governs stopping: actions stop, info tools chain
+    assert callable(agent.tool_use_behavior)
+
+
+def test_tool_policy_stops_on_actions_continues_on_info():
+    from agents.agent import ToolsToFinalOutputResult
+
+    from jarvis.openai_agent.brain import _tool_final_policy
+
+    class _R:
+        def __init__(self, name, output):
+            self.tool = type("T", (), {"name": name})()
+            self.output = output
+
+    # a pure device action → finalise and speak its result directly
+    r = _tool_final_policy(None, [_R("pause_music", "Music paused, sir.")])
+    assert isinstance(r, ToolsToFinalOutputResult)
+    assert r.is_final_output and r.final_output == "Music paused, sir."
+
+    # an informational tool → keep the loop open so it can chain / synthesise
+    r2 = _tool_final_policy(None, [_R("explain_this", "…the graph shows…")])
+    assert r2.is_final_output is False
+
+    # mixed turn with any info tool → keep going
+    r3 = _tool_final_policy(None, [_R("pause_music", "x"), _R("web_search", "y")])
+    assert r3.is_final_output is False
 
 
 def test_agent_has_all_domain_tools():
@@ -139,6 +164,30 @@ def test_screen_tools_expose_question_arg_and_routing_hint():
     et = tools["explain_screen"]
     assert "screen" in (et.description or "").lower()
     assert "question" in et.params_json_schema.get("properties", {})
+
+
+def test_explain_this_present_with_rag_and_is_document_aware():
+    """With a document index, JARVIS gains explain_this: aware of the live on-screen
+    document, its page/slide, and the surrounding subtopic pages."""
+    from jarvis.openai_agent.tools import build_screen_tools
+
+    with_rag = {t.name: t for t in
+                build_screen_tools(screen=object(), memory=_FakeMemory(), rag=object())}
+    assert "explain_this" in with_rag
+    d = (with_rag["explain_this"].description or "").lower()
+    assert "document" in d and ("page" in d or "subtopic" in d or "slide" in d)
+    # no index → no explain_this (nothing to ground it in)
+    without = {t.name for t in build_screen_tools(screen=object(), memory=_FakeMemory())}
+    assert "explain_this" not in without
+
+
+def test_files_tools_open_and_find_by_description():
+    """Opening/asking a document by free-text description (no exact filename)."""
+    from jarvis.openai_agent.tools import build_files_tools
+
+    names = {t.name for t in
+             build_files_tools(rag=object(), organizer=object(), memory=_FakeMemory())}
+    assert {"open_document", "find_document", "summarize_document", "ask_documents"} <= names
 
 
 # ── Adapter (chat context → agents input) ───────────────────────────────────

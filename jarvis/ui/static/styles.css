@@ -12,6 +12,9 @@ body{
   letter-spacing:.05em; -webkit-font-smoothing:antialiased;
 }
 .hidden{display:none !important}
+/* fallback when a non-app browser window can't be closed by script: fade it away;
+   cleared when the dashboard is summoned again by voice. */
+.dimmed{opacity:0;pointer-events:none;transition:opacity .35s}
 
 /* ambient layers */
 #grid-bg{position:fixed;inset:0;z-index:0;opacity:.35;
@@ -189,6 +192,34 @@ body{
 .ticker{border-top:1px solid var(--line);padding-top:8px;font-size:11px;color:var(--cyan-dim);letter-spacing:.3em;overflow:hidden;white-space:nowrap}
 .ticker span{display:inline-block;animation:scroll 26s linear infinite}
 @keyframes scroll{from{transform:translateX(30vw)}to{transform:translateX(-100%)}}
+
+/* ── Hide button (top bar) ───────────────────────────────── */
+.hide-btn{margin-left:14px;background:transparent;border:1px solid var(--line);color:var(--cyan);
+  font-family:var(--mono);font-size:11px;letter-spacing:.2em;padding:4px 10px;border-radius:4px;
+  cursor:pointer;transition:.18s;filter:drop-shadow(0 0 4px rgba(72,217,255,.3))}
+.hide-btn:hover{background:var(--cyan-deep);box-shadow:var(--glow)}
+
+/* ── Focus mode card ─────────────────────────────────────── */
+.focus-hud{position:fixed;top:88px;right:34px;z-index:55;width:230px;padding:18px 18px 16px;
+  text-align:center;border:1px solid var(--cyan);border-radius:12px;
+  background:linear-gradient(180deg,rgba(6,33,48,.96),rgba(2,7,12,.96));
+  box-shadow:0 0 26px rgba(72,217,255,.35),inset 0 0 24px rgba(72,217,255,.06);
+  animation:focusIn .4s ease both}
+@keyframes focusIn{from{opacity:0;transform:translateY(-12px) scale(.96)}to{opacity:1;transform:none}}
+.focus-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.focus-badge{font-size:10px;letter-spacing:.24em;color:var(--cyan)}
+.focus-tech{font-size:10px;letter-spacing:.18em;color:var(--gold)}
+.focus-timer{font-size:52px;line-height:1;font-weight:600;color:#eaffff;
+  text-shadow:0 0 18px rgba(72,217,255,.7);font-variant-numeric:tabular-nums;margin:6px 0}
+.focus-phase{font-size:12px;letter-spacing:.34em;color:var(--cyan);margin-bottom:10px}
+.focus-hud.break{border-color:var(--gold);box-shadow:0 0 26px rgba(255,207,107,.35),inset 0 0 24px rgba(255,207,107,.06)}
+.focus-hud.break .focus-timer{color:#fff2d4;text-shadow:0 0 18px rgba(255,207,107,.7)}
+.focus-hud.break .focus-phase,.focus-hud.break .focus-badge{color:var(--gold)}
+.focus-meta{font-size:10px;letter-spacing:.1em;color:var(--cyan-dim);margin-bottom:12px}
+.focus-sep{margin:0 5px}
+.focus-end{width:100%;background:transparent;border:1px solid var(--line);color:var(--cyan);
+  font-family:var(--mono);font-size:11px;letter-spacing:.2em;padding:7px;border-radius:5px;cursor:pointer;transition:.18s}
+.focus-end:hover{background:var(--cyan-deep);box-shadow:var(--glow)}
 
 /* scrollbars */
 ::-webkit-scrollbar{width:6px}

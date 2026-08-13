@@ -218,12 +218,21 @@ def build_music_tools(*, spotify: SpotifyController, memory, search_mode: str = 
 # ── Browser / media / tasks / documents ────────────────────────────────────
 def build_browser_tools(
     *, browser: BrowserController, memory, media: MediaController | None = None,
-    announce=None, workspace=None, browser_agent_enabled: bool = True,
+    announce=None, workspace=None, browser_agent_enabled: bool = True, focus=None,
 ) -> list:
+    def _blocked(target: str) -> str | None:
+        """If focus mode is on and `target` is a distraction, the refusal line."""
+        if focus is not None and focus.active and focus.is_distraction(target):
+            return (f"That's blocked in focus mode, sir — {target} stays shut. "
+                    "Say end focus mode to lift it.")
+        return None
+
     @function_tool
     async def open_site(name: str) -> str:
         """Open a website or web app in Chrome by name (youtube, instagram, gmail,
         github, netflix, …) or a URL. Unknown names are searched on Google."""
+        if (msg := _blocked(name)):
+            return msg
         def _do():
             res = browser.open_site(name)
             memory.log_activity(f"opened in browser: {name}")
@@ -237,6 +246,8 @@ def build_browser_tools(
     async def play_youtube(query: str) -> str:
         """Search YouTube for a song/video and open the top result (it autoplays).
         Use for 'play <x> on youtube' or 'play the <x> video'."""
+        if (msg := _blocked("youtube")):
+            return msg
         def _do():
             res = browser.play_youtube(query)
             memory.log_activity(f"watched on YouTube: {query}")
@@ -250,6 +261,8 @@ def build_browser_tools(
     async def latest_channel_video(channel: str) -> str:
         """Open the newest upload from a YouTube channel. Use for 'open a new
         <creator> video' or 'latest <creator> video'."""
+        if (msg := _blocked("youtube")):
+            return msg
         def _do():
             res = browser.latest_channel_video(channel)
             memory.log_activity(f"watched latest video from: {channel}")
@@ -263,6 +276,8 @@ def build_browser_tools(
     async def open_reels(platform: str = "instagram") -> str:
         """Open a scrolling short-form video feed. platform: 'instagram' (default)
         or 'youtube' for Shorts."""
+        if (msg := _blocked(platform)) or (msg := _blocked("reels")):
+            return msg
         try:
             return await asyncio.to_thread(browser.open_reels, platform)
         except BrowserError as e:
@@ -271,6 +286,8 @@ def build_browser_tools(
     @function_tool
     async def open_shorts() -> str:
         """Open the YouTube Shorts feed."""
+        if (msg := _blocked("shorts")):
+            return msg
         try:
             return await asyncio.to_thread(browser.open_shorts)
         except BrowserError as e:
@@ -354,7 +371,7 @@ def build_browser_tools(
 
 
 # ── Screen vision ──────────────────────────────────────────────────────────
-def build_screen_tools(*, screen: ScreenController, memory, ui=None) -> list:
+def build_screen_tools(*, screen: ScreenController, memory, ui=None, rag=None) -> list:
     @function_tool
     async def explain_screen(question: str = "", show_in_ui: bool = False) -> str:
         """Take a screenshot of the user's screen and explain what's on it, in
@@ -392,7 +409,54 @@ def build_screen_tools(*, screen: ScreenController, memory, ui=None) -> list:
         except ScreenError as e:
             return f"error: {e}"
 
-    return [explain_screen, take_screenshot]
+    tools = [explain_screen, take_screenshot]
+
+    if rag is not None:
+        @function_tool
+        async def explain_this(question: str = "", show_in_ui: bool = False) -> str:
+            """Explain the topic in the document the user is CURRENTLY looking at on
+            screen. Use for "explain this topic I don't understand", "explain this
+            slide", "what does this section mean", "I'm stuck on this page" — when the
+            user refers to something in a document open in front of them rather than
+            asking a standalone question. JARVIS finds which of the open documents is
+            live on screen, works out the page/slide and subtopic, then reads the
+            pages ABOVE and BELOW that subtopic from the indexed file (not just what's
+            visible) and explains it. Falls back to plain screen vision if the file
+            isn't indexed. Set show_in_ui=true to also render it on the HUD."""
+            def _do():
+                # 1) Look at the screen: which document, page/slide, subtopic, snippet.
+                ctx = screen.read_screen_context(question)
+                name_hint = ctx.get("document") or ctx.get("window_title") or ""
+                # 2) Explain from the indexed document, expanding across pages.
+                result = rag.explain_topic(
+                    question,
+                    document=name_hint,
+                    locator_text=ctx.get("snippet", ""),
+                    page=ctx.get("page", 0) or 0,
+                )
+                if result is None:
+                    # not indexed / couldn't locate → fall back to pure screen vision
+                    ans, img = screen.analyse(question or "Explain the topic shown here.")
+                    cite = "screen vision · gpt-4o"
+                    title = (question.strip()[:60] or "On-screen explanation")
+                else:
+                    ans = result["answer"]
+                    img = ctx.get("image_b64", "")
+                    cite = f"document · {result.get('cite') or result.get('document','')}"
+                    title = (question.strip()[:60] or result.get("subtopic")
+                             or f"{result.get('document','Document')} explained")
+                if show_in_ui and ui is not None:
+                    ui.show_explanation(title=title, body=ans, image_b64=img, source=cite)
+                memory.log_activity("explained a topic in the on-screen document")
+                return ans
+            try:
+                return await asyncio.to_thread(_do)
+            except ScreenError as e:
+                return f"error: {e}"
+
+        tools.append(explain_this)
+
+    return tools
 
 
 # ── Planner: calendar / to-dos / reminders + alarms ─────────────────────────
@@ -522,17 +586,29 @@ def build_files_tools(*, rag=None, organizer=None, memory=None) -> list:
 
     if rag is not None:
         @function_tool
-        async def ask_documents(question: str, filename: str = "") -> str:
-            """Answer a question using the user's indexed documents (PDFs, Word,
-            PowerPoint, notes). Use for "what does my <doc> say about X", "summarise
-            the report", "according to my notes …", or any question whose answer is
-            in the user's files. Optionally set `filename` to restrict to documents
-            whose path contains that text."""
+        async def ask_documents(question: str, document: str = "", page: int = 0) -> str:
+            """Answer ANY question from the user's indexed documents (PDFs, Word,
+            PowerPoint, notes) — "what does my report say about X", "according to my
+            notes …", "explain the formula on page 4", "what's on slide 3". You do
+            NOT need the exact filename: set `document` to a free-text description of
+            the file ("my machine learning assignment", "the OS notes") and it is
+            resolved automatically. Set `page` to a page/slide number to focus on
+            that page. Leave both blank to search across everything."""
             def _do():
-                ans = rag.answer(question, source_contains=filename)
+                ans = rag.answer(question, document=document, page=page)
                 if memory is not None:
                     memory.log_activity(f"answered from documents: {question}")
                 return ans
+            return await asyncio.to_thread(_do)
+
+        @function_tool
+        async def summarize_document(document: str, page: int = 0) -> str:
+            """Summarise a whole document (or one page/slide). `document` is a
+            free-text description of the file ("my thermodynamics notes"); no exact
+            filename needed. Set `page` to summarise just that page/slide. Use for
+            "summarise my <doc>", "give me the gist of X", "what's slide 5 about"."""
+            def _do():
+                return rag.summarize(document, page=page)
             return await asyncio.to_thread(_do)
 
         @function_tool
@@ -544,7 +620,62 @@ def build_files_tools(*, rag=None, organizer=None, memory=None) -> list:
             return (f"Index updated, sir: {s['added']} added, {s['updated']} refreshed, "
                     f"{s['removed']} removed ({s['unchanged']} unchanged).")
 
-        tools += [ask_documents, reindex_documents]
+        tools += [ask_documents, summarize_document, reindex_documents]
+
+    # opening/locating a document by DESCRIPTION needs both the index (to resolve
+    # the right file) and the organiser (to open it in its default app).
+    if rag is not None and organizer is not None:
+        @function_tool
+        async def open_document(description: str) -> str:
+            """Open a document by DESCRIPTION — no exact filename needed. Resolves
+            the best-matching indexed file from a phrase like "open my machine
+            learning assignment", "open the OS notes I downloaded", "pull up the
+            resume I was editing", then opens it in its default app. If several files
+            match closely it will read back the top few and ASK which one — the user
+            can then reply with a name or a bit more detail and you call this again."""
+            def _do():
+                ranked = rag.rank_documents(description)
+                if not ranked:
+                    return f"I couldn't find a document matching “{description}”, sir."
+                top = ranked[0]
+                # ambiguous when a close runner-up exists → ask instead of guessing.
+                rival = ranked[1] if len(ranked) > 1 else None
+                unsure = rival is not None and rival["score"] >= 0.75 * max(top["score"], 1e-6)
+                if unsure:
+                    names = [d["filename"] for d in ranked[:3]]
+                    listing = "; ".join(f"{i+1}) {n}" for i, n in enumerate(names))
+                    return (f"I found a few that match, sir: {listing}. "
+                            "Which one — you can say the name or a bit more detail?")
+                organizer.open_paths([top["source"]])
+                return f"Opening {top['filename']}, sir."
+            try:
+                return await asyncio.to_thread(_do)
+            except (SandboxError, OSError) as e:
+                return f"I couldn't open that, sir: {e}"
+
+        @function_tool
+        async def find_document(description: str) -> str:
+            """Locate a document by DESCRIPTION and report where it is and when it
+            was downloaded / last opened — WITHOUT opening it. Use for "where's my
+            X", "when did I download the Y report", "which folder is Z in"."""
+            def _do():
+                doc = rag.resolve_document(description)
+                if not doc:
+                    return f"I couldn't find a document matching “{description}”, sir."
+                bits = [doc["filename"]]
+                if doc.get("location"):
+                    bits.append(f"in {doc['location']}")
+                if doc.get("created"):
+                    bits.append(f"downloaded {doc['created']}")
+                if doc.get("modified") and doc.get("modified") != doc.get("created"):
+                    bits.append(f"last modified {doc['modified']}")
+                opened = organizer.last_opened(doc["source"])
+                if opened:
+                    bits.append(f"last opened {opened}")
+                return ", ".join(bits) + "."
+            return await asyncio.to_thread(_do)
+
+        tools += [open_document, find_document]
 
     if organizer is not None:
         @function_tool
@@ -636,6 +767,50 @@ def build_files_tools(*, rag=None, organizer=None, memory=None) -> list:
                   open_recent, open_folder_files, list_folder]
 
     return tools
+
+
+# ── Focus assist (close distractions, block reopening, timed regime) ────────
+def build_focus_tools(*, focus, memory=None) -> list:
+    from jarvis.focus.controller import TECHNIQUES
+
+    @function_tool
+    async def start_focus_mode(technique: str = "") -> str:
+        """Turn ON focus mode. Immediately closes every open distraction
+        (Instagram, YouTube, Netflix, TikTok, Reddit, X, …), starts a timed regime,
+        and keeps closing anything distracting the user reopens — until they say to
+        end focus mode. Use for "focus mode", "help me focus", "start a pomodoro",
+        "block distractions", "deep work session". `technique` is optional: pomodoro
+        (default, 25/5), classic (50/10), 52-17, 90-20, or flowtime."""
+        # async: the blocking tab-sweep runs off-loop, but the timer/watch tasks are
+        # created on THIS event loop (running them via to_thread would lose the loop).
+        msg = await focus.start(technique)
+        if memory is not None:
+            memory.log_activity(f"focus mode on ({focus.status()['technique']})")
+        return msg
+
+    @function_tool
+    async def stop_focus_mode() -> str:
+        """Turn OFF focus mode and lift all blocks. Use ONLY when the user clearly
+        asks to stop — "end focus mode", "stop focus mode", "I'm done focusing",
+        "turn off focus". Reports how many focus sprints they completed."""
+        msg = focus.stop()
+        if memory is not None:
+            memory.log_activity("focus mode off")
+        return msg
+
+    @function_tool
+    async def focus_status() -> str:
+        """Report the current focus session: whether it's on, the technique, the
+        current work/break phase, minutes left, and sprints done. Use for "how's my
+        focus session", "how long left", "am I in focus mode"."""
+        s = focus.status()
+        if not s["active"]:
+            return "Focus mode is off, sir."
+        return (f"Focus mode is on — {s['technique']}, currently in a {s['phase']} phase "
+                f"with about {s['minutes_left_in_phase']} minute(s) left; "
+                f"{s['cycles']} sprint(s) done so far.")
+
+    return [start_focus_mode, stop_focus_mode, focus_status]
 
 
 # ── HUD dashboard (hidden UI, voice-summoned) ───────────────────────────────

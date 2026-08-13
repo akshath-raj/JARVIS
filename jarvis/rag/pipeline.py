@@ -8,6 +8,7 @@ the most relevant chunks and asks the frontier model, citing the source files.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 from jarvis.rag.chunker import chunk_sections
@@ -28,13 +29,35 @@ def _sig(p: Path) -> str:
     return f"{st.st_size}-{int(st.st_mtime)}"
 
 
+_STOP = {"the", "and", "for", "pdf", "docx", "pptx", "doc", "notes", "final",
+         "draft", "copy", "document", "file", "slides", "slide", "presentation"}
+
+
+def _name_overlaps(hint: str, filename: str) -> bool:
+    """True if a meaningful word from `hint` (an on-screen title/description)
+    appears in `filename` — used to confirm the resolved file is really the one on
+    screen. If the hint carries no meaningful words, we can't disprove it → True."""
+    words = {w for w in re.findall(r"[a-z0-9]+", (hint or "").lower())
+             if len(w) > 2 and w not in _STOP}
+    if not words:
+        return True
+    stem = re.sub(r"[^a-z0-9]+", " ", Path(filename).stem.lower())
+    stem_words = set(stem.split())
+    return bool(words & stem_words)
+
+
 class RAGPipeline:
     def __init__(self, store: VectorStore, embedder: Embedder, *, answer_model: str,
-                 openai_api_key: str = "", dirs: list[str] | None = None) -> None:
+                 openai_api_key: str = "", dirs: list[str] | None = None,
+                 answer_base_url: str = "", answer_reasoning: str = "") -> None:
         self._store = store
         self._embedder = embedder
         self._answer_model = answer_model
-        self._openai_key = openai_api_key
+        self._answer_key = openai_api_key
+        # base_url of the answering LLM: Cerebras (fast) or OpenAI. Empty = OpenAI.
+        self._answer_base_url = answer_base_url
+        # reasoning effort for reasoning models (gpt-oss): "low" = faster. "" = omit.
+        self._answer_reasoning = answer_reasoning
         self._dirs = [str(Path(d).expanduser()) for d in (dirs or [])]
 
     # ── discovery ──────────────────────────────────────────────────────────────
@@ -131,12 +154,101 @@ class RAGPipeline:
         qv = self._embedder.embed_one(question)
         return self._store.search(qv, k, source_contains=source_contains)
 
-    def answer(self, question: str, *, k: int = 6, source_contains: str = "") -> str:
+    def documents(self) -> list[dict]:
+        return self._store.documents()
+
+    def rank_documents(self, description: str, *, k: int = 12) -> list[dict]:
+        """Rank indexed documents against a free-text description, best first. Each
+        result is a document record with an added `score`. Combines a filename-word
+        match with semantic relevance of the content, so the user never needs the
+        exact filename. Used to resolve a document and to offer choices when the
+        description is ambiguous."""
+        desc = (description or "").strip()
+        if not desc or self._store.stats()["chunks"] == 0:
+            return []
+        docs = self._store.documents()
+        by_src = {d["source"]: d for d in docs}
+        words = [w for w in re.findall(r"[a-z0-9]+", desc.lower()) if len(w) > 2]
+        name_scores: dict[str, float] = {}
+        for d in docs:
+            stem = Path(d["source"]).stem.lower()
+            hits = sum(1 for w in words if w in stem)
+            if hits:
+                name_scores[d["source"]] = hits / max(1, len(words))
+        sem_scores: dict[str, float] = {}
+        for h in self.search(desc, k):
+            sem_scores[h["source"]] = sem_scores.get(h["source"], 0.0) + h.get("score", 0.0)
+        combined: dict[str, float] = {}
+        for src in set(name_scores) | set(sem_scores):
+            combined[src] = 1.5 * name_scores.get(src, 0.0) + sem_scores.get(src, 0.0)
+        ranked = sorted(combined.items(), key=lambda kv: kv[1], reverse=True)
+        out = []
+        for src, score in ranked:
+            rec = dict(by_src.get(src, {"source": src, "filename": Path(src).name}))
+            rec["score"] = round(score, 4)
+            out.append(rec)
+        return out
+
+    def resolve_document(self, description: str, *, k: int = 12) -> dict | None:
+        """The single best-matching document for a description (or None)."""
+        ranked = self.rank_documents(description, k=k)
+        return ranked[0] if ranked else None
+
+    def locate_in_document(self, source_contains: str, text: str) -> dict | None:
+        """Find where a snippet of visible text sits inside a document — the chunk
+        (with its page/slide + section) that best matches it. Lets JARVIS pin the
+        exact spot the user is looking at from an on-screen excerpt."""
+        if not (text or "").strip():
+            return None
+        hits = self.search(text, 1, source_contains=source_contains)
+        return hits[0] if hits else None
+
+    def _complete(self, prompt: str, *, max_tokens: int = 900) -> str | None:
+        try:
+            from openai import OpenAI
+
+            from jarvis.openai_compat import chat_complete
+
+            client = OpenAI(api_key=self._answer_key,
+                            base_url=self._answer_base_url or None)
+            resp = chat_complete(
+                client,
+                model=self._answer_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+                max_output=max_tokens,
+                reasoning_effort=self._answer_reasoning or None,
+            )
+            return (resp.choices[0].message.content or "").strip()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("answer model failed: %s", e)
+            return None
+
+    def answer(self, question: str, *, k: int = 6, source_contains: str = "",
+               document: str = "", page: int = 0) -> str:
+        """Answer a question from the indexed documents. Optionally scope to one
+        document (by free-text `document` description or `source_contains`
+        substring) and/or a specific `page`/slide number."""
         if self._store.stats()["chunks"] == 0:
             return "I haven't indexed any documents yet, sir — download some or ask me to reindex."
-        hits = self.search(question, k, source_contains=source_contains)
+
+        src_filter, label = source_contains, ""
+        if document:
+            doc = self.resolve_document(document)
+            if not doc:
+                return f"I couldn't find a document matching “{document}”, sir."
+            src_filter, label = doc["source"], doc["filename"]
+
+        if page and src_filter:
+            hits = self._store.chunks_for(src_filter, page=page)
+            if not hits:
+                where = label or "that document"
+                return f"I couldn't find page {page} in {where}, sir."
+        else:
+            hits = self.search(question, k, source_contains=src_filter)
         if not hits:
             return "I couldn't find anything relevant in your documents, sir."
+
         context = "\n\n".join(
             f"[{i+1}] ({h['metadata'].get('cite','?')})\n{h['text']}" for i, h in enumerate(hits)
         )
@@ -152,18 +264,101 @@ class RAGPipeline:
             "documents. Do not invent citations.\n\n"
             f"EXCERPTS:\n{context}\n\nQUESTION: {question}"
         )
-        try:
-            from openai import OpenAI
-
-            client = OpenAI(api_key=self._openai_key)
-            resp = client.chat.completions.create(
-                model=self._answer_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
-                max_tokens=500,
-            )
-            ans = (resp.choices[0].message.content or "").strip()
-        except Exception as e:  # noqa: BLE001
-            return f"I couldn't reach the answering model, sir ({e})."
+        ans = self._complete(prompt)
+        if ans is None:
+            return "I couldn't reach the answering model, sir."
         top = sources[0] if sources else ""
         return ans + (f" (Source: {top}.)" if top and "couldn't find" not in ans.lower() else "")
+
+    def summarize(self, document: str, *, page: int = 0, max_chunks: int = 40) -> str:
+        """Summarise a whole document (or one page/slide) resolved from a
+        free-text description."""
+        if self._store.stats()["chunks"] == 0:
+            return "I haven't indexed any documents yet, sir."
+        doc = self.resolve_document(document) if document else None
+        if not doc:
+            return f"I couldn't find a document matching “{document}”, sir."
+        chunks = self._store.chunks_for(doc["source"], page=page or None)
+        if not chunks:
+            where = f"page {page} of " if page else ""
+            return f"I couldn't find {where}{doc['filename']} in the index, sir."
+        body = "\n\n".join(c["text"] for c in chunks[:max_chunks])
+        scope = f"page {page} of " if page else ""
+        prompt = (
+            f"Summarise {scope}the document below for the user, spoken aloud as plain "
+            "prose (no markdown, no bullet symbols). Capture the main points and any "
+            "key conclusions in a few sentences.\n\n"
+            f"DOCUMENT ({doc['filename']}):\n{body}"
+        )
+        ans = self._complete(prompt, max_tokens=900)
+        if ans is None:
+            return "I couldn't reach the answering model, sir."
+        return ans + f" (Source: {doc['filename']}.)"
+
+    def explain_topic(self, question: str, *, source: str = "", document: str = "",
+                      locator_text: str = "", page: int = 0, radius: int = 3) -> dict | None:
+        """Explain the subtopic the user is looking at, using the indexed document
+        as the source of truth. Locates the on-screen spot (from `locator_text`
+        and/or `page`) inside the document, then gathers the pages just above and
+        below that belong to the same subtopic — so an explanation isn't limited to
+        what a single screenshot shows. Returns {answer, document, page, subtopic,
+        cite}, or None if the document isn't indexed (caller should fall back to
+        plain screen vision)."""
+        if self._store.stats()["chunks"] == 0:
+            return None
+        src, label = source, (Path(source).name if source else "")
+        if not src and document:
+            doc = self.resolve_document(document)
+            # Confidence guard: the on-screen document's own name/title should share
+            # a real word with the file we resolved. If it doesn't, the live document
+            # probably isn't indexed — return None so the caller falls back to plain
+            # screen vision instead of confidently explaining the WRONG file.
+            if doc and _name_overlaps(document, doc["filename"]):
+                src, label = doc["source"], doc["filename"]
+        if not src:
+            return None
+
+        center, section = None, ""
+        loc = self.locate_in_document(src, locator_text) if locator_text else None
+        if loc is None and page:
+            pg = self._store.chunks_for(src, page=page)
+            loc = pg[0] if pg else None
+        if loc is not None:
+            m = loc.get("metadata", {})
+            center = m.get("chunk_index")
+            section = m.get("section", "")
+            page = page or m.get("page", 0) or 0
+
+        if center is not None:
+            chunks = self._store.context_window(src, center, radius=radius, section=section)
+        elif page:
+            chunks = self._store.chunks_for(src, page=page)
+        else:
+            chunks = self.search(question or locator_text or label, 6, source_contains=src)
+        if not chunks:
+            return None
+
+        context = "\n\n".join(
+            f"({c['metadata'].get('cite','?')})\n{c['text']}" for c in chunks
+        )
+        where = ""
+        if page:
+            where += f" around page {page}"
+        if section:
+            where += f", under “{section}”"
+        prompt = (
+            "The user is looking at this document on screen and wants a subtopic "
+            "explained so they can understand it. Teach it clearly and simply, in "
+            "your own words, using the document context below" + (where or "") + ". "
+            "The context spans the pages before and after what's on screen so you "
+            "have the full subtopic — use it. Spoken aloud, so plain prose, no "
+            "markdown. If the context genuinely doesn't cover it, say so briefly.\n\n"
+            f"DOCUMENT: {label}\nCONTEXT:\n{context}\n\n"
+            f"USER: {question or 'Explain this topic to me, I am not able to understand it.'}"
+        )
+        ans = self._complete(prompt, max_tokens=1000)
+        if ans is None:
+            return None
+        cite = label + (f" · p{page}" if page else "")
+        return {"answer": ans, "document": label, "page": page,
+                "subtopic": section, "cite": cite}

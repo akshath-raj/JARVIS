@@ -144,16 +144,6 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
             tasks, announce=announcer.announce, ui=ui,
             sound=config.alarm_sound or None,
         )
-        if ui is not None:
-            def _on_cmd(cmd: dict) -> None:
-                c = (cmd or {}).get("cmd")
-                if c == "dismiss_alarm":
-                    scheduler.dismiss(cmd.get("id"))
-                elif c == "complete_todo" and cmd.get("text"):
-                    tasks.complete_todo(cmd["text"])
-                    scheduler.dismiss(cmd.get("id"))
-
-            ui.set_command_handler(_on_cmd)
 
     # ── Document RAG (local index) + sandboxed file organiser ──────────────
     rag = organizer = None
@@ -166,9 +156,37 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
 
         organizer = FileOrganizer(Sandbox(config.files_sandbox))
 
+    # ── Focus assist (closes distractions, blocks reopening, timed regime) ──
+    focus = None
+    if config.focus_enabled:
+        from jarvis.focus import FocusController
+
+        focus = FocusController(
+            announce=announcer.announce, ui=ui,
+            extra_sites=tuple(s.strip() for s in config.focus_block_sites.split(",") if s.strip()),
+            block_apps=tuple(a.strip() for a in config.focus_block_apps.split(",") if a.strip()),
+            poll_seconds=config.focus_poll_seconds,
+            default_technique=config.focus_default_technique,
+        )
+
+    # ── HUD inbound commands (alarm buttons, end-focus button) ─────────────
+    if ui is not None:
+        def _on_cmd(cmd: dict) -> None:
+            c = (cmd or {}).get("cmd")
+            if c == "dismiss_alarm" and scheduler is not None:
+                scheduler.dismiss(cmd.get("id"))
+            elif c == "complete_todo" and cmd.get("text") and scheduler is not None:
+                tasks.complete_todo(cmd["text"])
+                scheduler.dismiss(cmd.get("id"))
+            elif c == "end_focus" and focus is not None:
+                focus.stop()
+
+        ui.set_command_handler(_on_cmd)
+
     brain, memory = build_brain(
         announce=announcer.announce, memory=shared_memory,
         ui=ui, open_cb=open_cb, scheduler=scheduler, rag=rag, organizer=organizer,
+        focus=focus,
     )
 
     from jarvis.agents.graph_agent import GraphAgent
@@ -223,6 +241,12 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
             pass
 
     _asyncio.create_task(_warmup())
+
+    # Bring up the HUD automatically on launch (no voice command needed). The Hide
+    # button in the HUD dismisses the window; saying "show the dashboard" reopens it.
+    if ui is not None and open_cb is not None:
+        ui.reveal()
+        _asyncio.create_task(_asyncio.to_thread(open_cb))
 
     # Auto-ingest: periodically rescan the watched folders so freshly-downloaded
     # documents get indexed without re-embedding everything.

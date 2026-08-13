@@ -35,6 +35,7 @@
       <div class="status">
         <span class="dot"></span> ONLINE
         <span class="clock" id="clock">--:--:--</span>
+        <button id="hide-btn" class="hide-btn" title="Hide dashboard (say &quot;show the dashboard&quot; to bring it back)">⌄ HIDE</button>
       </div>
     </header>
 
@@ -86,6 +87,22 @@
     </div>
     <footer class="ticker"><span id="ticker-text">SYSTEMS NOMINAL · VOICE INTERFACE ACTIVE · MEMORY SYNC OK</span></footer>
   </main>
+
+  <!-- FOCUS MODE card (appears while a focus session is running) -->
+  <div id="focus-hud" class="focus-hud hidden">
+    <div class="focus-h">
+      <span class="focus-badge">◎ FOCUS MODE</span>
+      <span id="focus-tech" class="focus-tech">POMODORO</span>
+    </div>
+    <div class="focus-timer" id="focus-timer">··:··</div>
+    <div class="focus-phase" id="focus-phase">FOCUS</div>
+    <div class="focus-meta">
+      <span id="focus-cycles">0 sprints</span>
+      <span class="focus-sep">·</span>
+      <span class="focus-lock">🔒 distractions blocked</span>
+    </div>
+    <button id="focus-end" class="focus-end">END FOCUS</button>
+  </div>
 
   <!-- ALARM overlay -->
   <div id="alarm" class="alarm-overlay hidden">

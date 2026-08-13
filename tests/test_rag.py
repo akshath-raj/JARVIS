@@ -168,3 +168,109 @@ def test_ingest_single_file(tmp_path):
     assert store.stats()["documents"] == 1
     # second ingest is a no-op (already indexed, unchanged)
     assert rag.ingest_file(str(f))["indexed"] is False
+
+
+# ── metadata enrichment (page / dates / location) ────────────────────────────
+def test_chunk_metadata_has_dates_and_location(tmp_path):
+    f = tmp_path / "report.txt"
+    f.write_text("some real content here " * 20)
+    chunks = chunk_sections(f, [Section(title="Intro", text="alpha " * 50, page=None)])
+    m = chunks[0].metadata
+    assert m["location"] == str(tmp_path)
+    assert m["source"] == str(f)
+    # created/modified are ISO dates (YYYY-MM-DD)
+    assert len(m["created"]) == 10 and m["modified"].count("-") == 2
+
+
+def test_pdf_page_number_flows_into_metadata(tmp_path):
+    secs = [Section(title="Page 3", text="the quadratic formula is here", page=3)]
+    chunks = chunk_sections(tmp_path / "math.pdf", secs)
+    assert chunks[0].metadata["page"] == 3
+    assert "p3" in chunks[0].metadata["cite"]
+
+
+# ── description-based resolution, page targeting, summary ────────────────────
+def _index_docs(tmp_path, files: dict):
+    docs = tmp_path / "docs"; docs.mkdir()
+    for name, text in files.items():
+        (docs / name).write_text(text)
+    rag, store = _pipeline(tmp_path, docs)
+    rag.sync()
+    return rag, store, docs
+
+
+def test_resolve_document_by_filename_words(tmp_path):
+    rag, _, docs = _index_docs(tmp_path, {
+        "machine_learning_assignment.txt": "gradient descent and neural nets",
+        "grocery_list.txt": "milk eggs bread",
+    })
+    doc = rag.resolve_document("my machine learning assignment")
+    assert doc and doc["filename"] == "machine_learning_assignment.txt"
+    assert doc["source"] == str(docs / "machine_learning_assignment.txt")
+
+
+def test_chunks_for_page_targeting(tmp_path):
+    store = VectorStore(str(tmp_path / "idx"), dim=8, embed_key="fake:test")
+    emb = FakeEmbedder()
+    secs = [Section("Page 1", "first page text", page=1),
+            Section("Page 2", "second page text", page=2)]
+    chunks = chunk_sections(tmp_path / "deck.pdf", secs)
+    store.add_document(str(tmp_path / "deck.pdf"), hash="h", mtime=1, size=1,
+                       chunks=chunks, vectors=emb.embed([c.text for c in chunks]))
+    only2 = store.chunks_for("deck.pdf", page=2)
+    assert only2 and all(c["metadata"]["page"] == 2 for c in only2)
+    assert store.documents()[0]["filename"] == "deck.pdf"
+
+
+# ── disambiguation + on-screen subtopic explanation ──────────────────────────
+def test_rank_documents_orders_and_scores(tmp_path):
+    rag, _, _ = _index_docs(tmp_path, {
+        "neural_networks.txt": "backpropagation gradient descent layers",
+        "networks_notes.txt": "tcp ip routing subnets neural",
+        "cooking.txt": "pasta tomato basil",
+    })
+    ranked = rag.rank_documents("neural network")
+    assert ranked[0]["filename"] == "neural_networks.txt"
+    assert all("score" in d for d in ranked)
+    assert ranked[0]["score"] >= ranked[-1]["score"]
+
+
+def test_context_window_spans_pages_and_section(tmp_path):
+    store = VectorStore(str(tmp_path / "idx"), dim=8, embed_key="fake:test")
+    emb = FakeEmbedder()
+    # a subtopic ("Entropy") running across pages 2-4, plus unrelated pages.
+    secs = [
+        Section("Page 1", "intro material", page=1),
+        Section("Entropy", "entropy definition part one", page=2),
+        Section("Entropy", "entropy worked example continues", page=3),
+        Section("Entropy", "entropy summary and takeaways", page=4),
+        Section("Page 5", "unrelated later material", page=5),
+    ]
+    chunks = chunk_sections(tmp_path / "thermo.pdf", secs)
+    store.add_document(str(tmp_path / "thermo.pdf"), hash="h", mtime=1, size=1,
+                       chunks=chunks, vectors=emb.embed([c.text for c in chunks]))
+    # centre on the page-3 chunk; same-section chunks (2,3,4) must all be gathered.
+    center = next(c["metadata"]["chunk_index"] for c in store.chunks_for("thermo.pdf", page=3))
+    ctx = store.context_window("thermo.pdf", center, radius=0, section="Entropy")
+    pages = sorted({c["metadata"]["page"] for c in ctx})
+    assert pages == [2, 3, 4]        # whole subtopic, not just the visible page
+
+
+def test_explain_topic_uses_located_subtopic(tmp_path, monkeypatch):
+    rag, _, _ = _index_docs(tmp_path, {"os_notes.txt": "paging and virtual memory basics"})
+    # stub the answering model so the test stays offline
+    monkeypatch.setattr(rag, "_complete", lambda *a, **k: "Here is the explanation.")
+    out = rag.explain_topic("explain this", document="os notes",
+                            locator_text="virtual memory")
+    assert out is not None and out["document"] == "os_notes.txt"
+    assert out["answer"] == "Here is the explanation."
+
+
+def test_explain_topic_falls_back_when_onscreen_doc_not_indexed(tmp_path, monkeypatch):
+    rag, _, _ = _index_docs(tmp_path, {"operating_systems.txt": "paging virtual memory"})
+    monkeypatch.setattr(rag, "_complete", lambda *a, **k: "ok")
+    # the on-screen title matches the indexed file → explains from the document
+    assert rag.explain_topic("x", document="operating systems", locator_text="paging") is not None
+    # the live document's title matches NO indexed file → None, so the caller falls
+    # back to plain screen vision instead of explaining the wrong file
+    assert rag.explain_topic("x", document="quantum chemistry lab report", locator_text="q") is None

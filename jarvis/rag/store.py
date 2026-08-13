@@ -107,6 +107,68 @@ class VectorStore:
         with self._lock:
             return {"documents": len(self._docs), "chunks": len(self._chunks)}
 
+    def documents(self) -> list[dict]:
+        """One record per indexed document with its file metadata (filename,
+        location on device, created/downloaded + modified dates, chunk count).
+        Used to resolve a document from a description and to answer "where/when"
+        questions about a file."""
+        with self._lock:
+            seen: dict[str, dict] = {}
+            for c in self._chunks:
+                src = c["source"]
+                if src in seen:
+                    continue
+                m = c.get("metadata", {})
+                d = self._docs.get(src, {})
+                seen[src] = {
+                    "source": src,
+                    "filename": m.get("filename", Path(src).name),
+                    "location": m.get("location", str(Path(src).parent)),
+                    "created": m.get("created", ""),
+                    "modified": m.get("modified", ""),
+                    "ext": m.get("ext", Path(src).suffix.lstrip(".")),
+                    "n_chunks": d.get("n_chunks", 0),
+                }
+            return list(seen.values())
+
+    def context_window(self, source_contains: str, center_index: int, *,
+                       radius: int = 2, section: str = "") -> list[dict]:
+        """Chunks around a located spot in a document: those within
+        `center_index ± radius` (spanning the pages just above and below), plus any
+        sharing the same `section` title. This assembles a whole subtopic even when
+        it runs across several pages, ordered as in the document."""
+        with self._lock:
+            needle = source_contains.lower()
+            lo, hi = center_index - radius, center_index + radius
+            out = []
+            for c in self._chunks:
+                if needle and needle not in c["source"].lower():
+                    continue
+                m = c.get("metadata", {})
+                idx = m.get("chunk_index")
+                in_window = idx is not None and lo <= idx <= hi
+                same_section = bool(section) and m.get("section") == section
+                if in_window or same_section:
+                    out.append(dict(c))
+            out.sort(key=lambda c: c.get("metadata", {}).get("chunk_index", 0))
+            return out
+
+    def chunks_for(self, source_contains: str, *, page: int | None = None) -> list[dict]:
+        """All chunks of the document(s) whose path contains `source_contains`,
+        optionally only those on a given page/slide, ordered as in the document.
+        Powers "explain page 5 / slide 3" and whole-document summaries."""
+        with self._lock:
+            needle = source_contains.lower()
+            out = []
+            for c in self._chunks:
+                if needle and needle not in c["source"].lower():
+                    continue
+                if page is not None and c.get("metadata", {}).get("page") != page:
+                    continue
+                out.append(dict(c))
+            out.sort(key=lambda c: c.get("metadata", {}).get("chunk_index", 0))
+            return out
+
     # ── writes ────────────────────────────────────────────────────────────────
     def add_document(self, source: str, *, hash: str, mtime: float, size: int,
                      chunks: list, vectors: np.ndarray) -> None:

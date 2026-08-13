@@ -170,6 +170,40 @@ $("alarm-done").addEventListener("click", () => {
   hideAlarm();
 });
 
+// ── hide button (dismiss the dashboard window; voice re-opens it) ────────────
+$("hide-btn").addEventListener("click", () => {
+  window.close();                    // works for the chromeless --app window
+  setTimeout(() => document.body.classList.add("dimmed"), 60);  // fallback if not closable
+});
+$("focus-end").addEventListener("click", () => wsSend({ cmd: "end_focus" }));
+
+// ── focus mode card (technique + live countdown + phase) ─────────────────────
+let focusState = null;
+function renderFocus(f) {
+  const card = $("focus-hud");
+  if (!card) return;
+  if (!f || !f.active) { card.classList.add("hidden"); focusState = null; return; }
+  focusState = f;
+  card.classList.remove("hidden");
+  $("focus-tech").textContent = (f.technique || "").toUpperCase();
+  const phase = (f.phase || "").toLowerCase();
+  card.classList.toggle("break", phase === "break");
+  $("focus-phase").textContent =
+    phase === "break" ? "BREAK" : phase === "starting" ? "STARTING…" : "FOCUS";
+  const n = f.cycles || 0;
+  $("focus-cycles").textContent = `${n} sprint${n === 1 ? "" : "s"}`;
+  tickFocus();
+}
+function tickFocus() {
+  if (!focusState || !focusState.active) return;
+  const el = $("focus-timer");
+  if (!focusState.ends_at) { el.textContent = "··:··"; return; }
+  let rem = Math.max(0, Math.round(focusState.ends_at * 1000 - Date.now()) / 1000);
+  const m = Math.floor(rem / 60), s = Math.floor(rem % 60);
+  el.textContent = `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+setInterval(tickFocus, 1000);
+
 // ── live Q&A + analysis feed (every question + answer + screen analysis) ─────
 let typeToken = 0, feedSeen = 0, feedCount = 0;
 function feedEl() { return $("feed"); }
@@ -259,7 +293,7 @@ function navigate(ev) {
 const pendingFeed = [];
 function applyEvent(ev) {
   switch (ev.type) {
-    case "reveal": revealPending = true; maybeReveal(lastState); break;
+    case "reveal": document.body.classList.remove("dimmed"); revealPending = true; maybeReveal(lastState); break;
     case "hide": break; // the parent window is closed by voice; page stays loaded
     case "feed":
       if (booted) appendFeedEntry(ev.entry, true);
@@ -268,6 +302,10 @@ function applyEvent(ev) {
     case "navigate": if (booted) navigate(ev); break;
     case "alarm": revealPending = true; maybeReveal(lastState); showAlarm(ev.alarm); break;
     case "alarm_cleared": hideAlarm(); break;
+    case "focus":
+      if (ev.focus && ev.focus.active) { revealPending = true; maybeReveal(lastState); }
+      if (booted) renderFocus(ev.focus);
+      break;
   }
 }
 
@@ -276,7 +314,7 @@ async function maybeReveal(state) {
   if (booted) return;
   if (!(state && (state.revealed || revealPending))) return;
   await reveal(state.user);
-  if (state) syncFeed(state);
+  if (state) { syncFeed(state); renderFocus(state.focus); }
   while (pendingFeed.length) appendFeedEntry(pendingFeed.shift(), false);
 }
 
@@ -290,6 +328,7 @@ function applySnapshot(state) {
   cursor = state.cursor || cursor;
   // a late-joining client should still see a currently ringing alarm
   if (booted && (state.alarms || []).length && !currentAlarm) showAlarm(state.alarms[0]);
+  if (booted) renderFocus(state.focus);   // and an in-progress focus session
   maybeReveal(state);
 }
 

@@ -101,18 +101,21 @@ class Config:
     #           agents (Music / Browser / Screen), all running on a frontier model.
     #           This is the "cloud brain" with full feature parity + screen vision.
     # "native": the previous hand-rolled LiveKit supervisor (fallback / rollback).
-    orchestrator: str = os.getenv("JARVIS_ORCHESTRATOR", "langgraph")
+    orchestrator: str = os.getenv("JARVIS_ORCHESTRATOR", "openai")
     # Which provider backs the agent brain: "cerebras" (default — OpenAI-compatible,
-    # ~2000+ tok/s, much lower latency) or "openai". Cerebras uses cerebras_model
-    # (gpt-oss-120b) and CEREBRAS_API_KEY; vision + RAG answering always stay on
-    # OpenAI. Falls back to OpenAI if the Cerebras key is missing.
+    # ~2000+ tok/s, much lower latency) or "openai". When "cerebras", the brain,
+    # RAG answering AND screen vision all run on Cerebras (text on cerebras_model,
+    # images on cerebras_vision_model) for uniformly fast responses. Falls back to
+    # OpenAI (cloud_agent_model / vision_model) if the Cerebras key is missing.
     agent_provider: str = os.getenv("JARVIS_AGENT_PROVIDER", "cerebras")
     cerebras_base_url: str = os.getenv("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
-    # Frontier model the OpenAI Agents SDK brain runs on. A fast "mini" tool-caller
-    # keeps voice latency low (a single agent = one call per command).
+    # Cerebras multimodal model for images (screenshots/docs/charts) — Gemma 4 31B,
+    # ~1800 tok/s, OpenAI-compatible image_url inputs. Used for screen vision + RAG
+    # answering when agent_provider="cerebras".
+    cerebras_vision_model: str = os.getenv("JARVIS_CEREBRAS_VISION_MODEL", "gemma-4-31b")
+    # Frontier model the OpenAI Agents SDK brain runs on when agent_provider="openai".
     cloud_agent_model: str = os.getenv("JARVIS_CLOUD_AGENT_MODEL", "gpt-5.4-mini")
-    # Vision model used to look at a screenshot and explain what's on screen.
-    # gpt-4o gives detailed, accurate reads of arbitrary screen content.
+    # OpenAI vision model used when agent_provider="openai" (or Cerebras key absent).
     vision_model: str = os.getenv("JARVIS_VISION_MODEL", "gpt-4o")
 
     # ── HUD dashboard UI (hidden; appears on voice command) ─────────────
@@ -156,6 +159,18 @@ class Config:
     scheduler_enabled: bool = _truthy(os.getenv("JARVIS_SCHEDULER", "1"))
     # macOS system sound looped as the alarm (empty = default Sosumi).
     alarm_sound: str = os.getenv("JARVIS_ALARM_SOUND", "")
+
+    # ── Focus assist mode ───────────────────────────────────────────────
+    # "focus mode on" closes open distractions (Instagram/YouTube/Netflix/…),
+    # runs a Pomodoro (or another technique), and keeps closing any distraction
+    # you reopen — until "end focus mode".
+    focus_enabled: bool = _truthy(os.getenv("JARVIS_FOCUS", "1"))
+    focus_default_technique: str = os.getenv("JARVIS_FOCUS_TECHNIQUE", "pomodoro")
+    focus_poll_seconds: int = int(os.getenv("JARVIS_FOCUS_POLL", "3"))  # distraction-scan cadence
+    # extra comma-separated distraction domains / macOS app names to block (added
+    # to the built-in defaults). Apps are only quit if the user lists them here.
+    focus_block_sites: str = os.getenv("JARVIS_FOCUS_BLOCK_SITES", "")
+    focus_block_apps: str = os.getenv("JARVIS_FOCUS_BLOCK_APPS", "")
     # Local embedding model (kept for optional future use; memory no longer indexes).
     embed_model: str = os.getenv("JARVIS_EMBED_MODEL", "nomic-embed-text")
     embed_dims: int = int(os.getenv("JARVIS_EMBED_DIMS", "768"))  # nomic-embed-text = 768

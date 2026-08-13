@@ -30,6 +30,7 @@ from jarvis.graph.memory import MemoryStore
 from jarvis.openai_agent.tools import (
     build_browser_tools,
     build_files_tools,
+    build_focus_tools,
     build_music_tools,
     build_planner_tools,
     build_screen_tools,
@@ -75,15 +76,32 @@ _GUIDE = (
     "they ask to LIST / FIND / RECOMMEND / 'good videos on X' or 'best … videos', use "
     "web_search and just TELL them the list — do NOT play anything. control_video "
     "controls a video already playing (subtitles/speed/volume/brightness/pause/seek). "
-    "explain_screen to look at what's on screen (show_in_ui=true to also render it on "
-    "the HUD). web_search for current/live info (news, prices, weather, scores) or "
+    "explain_screen to look at what's generally on screen; explain_this when the user "
+    "refers to a topic/slide/section in a document they are LOOKING AT ('explain this "
+    "I don't understand', 'what does this slide mean') — it finds the live document, "
+    "the page, and reads the surrounding pages of that subtopic. show_in_ui=true on "
+    "either to also render it on the HUD. web_search for current/live info (news, "
+    "prices, weather, scores) or "
     "for lists of recommendations. remember/forget/recall_about_me for stored personal "
     "facts (NOT listening history). add_reminder/add_todo/add_calendar_event/"
     "complete_todo/stop_alarm for time & tasks (pass absolute ISO datetimes computed "
-    "from now). ask_documents for questions answered by the user's files; the file "
-    "tools to organise/move/copy/open (you can NEVER delete). show_dashboard / "
-    "hide_dashboard / open_dashboard_section / display_on_dashboard for the HUD. Reply "
-    "in ONE short sentence; ask a question only if an essential detail is missing."
+    "from now). ask_documents for ANY question answered by the user's files (pass a "
+    "free-text `document` description + optional `page` — never demand the exact "
+    "filename); summarize_document to summarise a file/page; open_document to open a "
+    "file by description; find_document for where/when a file is. Other file tools "
+    "organise/move/copy/open by path (you can NEVER delete). show_dashboard / "
+    "hide_dashboard / open_dashboard_section / display_on_dashboard for the HUD. "
+    "start_focus_mode when the user wants to focus / avoid distractions / do a "
+    "pomodoro or deep-work session (it closes distractions and blocks reopening "
+    "them); stop_focus_mode ONLY when they clearly say to end focus; focus_status "
+    "for how the session is going. "
+    "If a request needs MULTIPLE steps, call the tools in sequence and only answer "
+    "once you have everything (e.g. 'explain this graph AND check 2026 data' → "
+    "explain_this THEN web_search, then give one combined answer). When confirming a "
+    "device ACTION (play/pause/open/move/reminder) reply in ONE short sentence; but "
+    "when ANSWERING or EXPLAINING (explain_this/explain_screen/ask_documents/"
+    "summarize_document/web_search) give the FULL answer — do not compress a detailed "
+    "explanation into one sentence. Ask a question only if an essential detail is missing."
 )
 
 
@@ -119,10 +137,24 @@ def _resolve_model():
     return config.cloud_agent_model
 
 
+def _build_screen() -> ScreenController:
+    """Screen vision on Cerebras Gemma 4 (fast) when selected + keyed, else OpenAI."""
+    if config.agent_provider == "cerebras" and config.cerebras_api_key:
+        logger.info("screen vision on Cerebras %s", config.cerebras_vision_model)
+        return ScreenController(
+            vision_model=config.cerebras_vision_model,
+            openai_api_key=config.cerebras_api_key,
+            base_url=config.cerebras_base_url,
+        )
+    return ScreenController(
+        vision_model=config.vision_model, openai_api_key=config.openai_api_key
+    )
+
+
 def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
                 media=None, screen=None, announce=None, workspace=None,
                 ui=None, open_cb=None, scheduler=None, rag=None, organizer=None,
-                agent_model=None):
+                focus=None, agent_model=None):
     """Return (triage_agent, memory). Dependencies are injectable for tests.
 
     `ui` (a UIController) enables the HUD dashboard tools; `open_cb` is called to
@@ -138,15 +170,17 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
     browser = browser or BrowserController(config.browser_app)
     tavily = tavily or TavilyClient(config.tavily_api_key)
     media = media or MediaController(config.browser_app)
-    screen = screen or ScreenController(
-        vision_model=config.vision_model, openai_api_key=config.openai_api_key
-    )
+    screen = screen or _build_screen()
     if workspace is None:
         from jarvis.documents.workspace import Workspace
         workspace = Workspace(downloads_dir=config.browser_downloads)
 
     model = agent_model or _resolve_model()  # agent_model lets tests/benchmarks override
     settings = ModelSettings(temperature=0.2)
+    if config.agent_provider == "cerebras" and config.cerebras_api_key:
+        # gpt-oss is a reasoning model; minimal reasoning keeps tool-calling latency
+        # low (the biggest lever on "responses take a long time").
+        settings = ModelSettings(temperature=0.2, extra_body={"reasoning_effort": "low"})
 
     # ONE agent with every tool → a command is a SINGLE model call. Handoffs would
     # add a second sequential call (the routing hop) and double the latency, which
@@ -157,8 +191,9 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
     tools += build_browser_tools(
         browser=browser, memory=memory, media=media, announce=announce,
         workspace=workspace, browser_agent_enabled=config.browser_agent_enabled,
+        focus=focus,
     )
-    tools += build_screen_tools(screen=screen, memory=memory, ui=ui)
+    tools += build_screen_tools(screen=screen, memory=memory, ui=ui, rag=rag)
     tools += build_triage_tools(tavily=tavily, memory=memory)
     if ui is not None:
         tools += build_ui_tools(ui=ui, open_cb=open_cb)
@@ -166,20 +201,44 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
         tools += build_planner_tools(scheduler=scheduler, memory=memory)
     if rag is not None or organizer is not None:
         tools += build_files_tools(rag=rag, organizer=organizer, memory=memory)
+    if focus is not None:
+        tools += build_focus_tools(focus=focus, memory=memory)
 
     agent = Agent[BrainContext](
         name="JARVIS",
         instructions=_instructions,
         model=model,
         model_settings=settings,
-        tool_use_behavior="stop_on_first_tool",
+        tool_use_behavior=_tool_final_policy,
         tools=tools,
     )
     logger.info("OpenAI Agents brain ready (single agent, model %s, %d tools)", model, len(tools))
     return agent, memory
 
 
+# Informational/answer tools return DATA the model may need to act on further —
+# chain another tool ("explain this AND check 2026 data" → explain_this then
+# web_search) or fold several results into one spoken reply. Keep the agent loop
+# OPEN after these. Every other tool is a device ACTION whose result is spoken
+# directly (one fast round-trip, and the model can't narrate an action it skipped).
+_CONTINUE_TOOLS = frozenset({
+    "explain_screen", "explain_this", "ask_documents", "summarize_document",
+    "find_document", "web_search", "list_folder", "recall_about_me",
+})
+
+
+def _tool_final_policy(run_context, results):
+    """Decide, after a turn's tools run, whether to stop or keep reasoning."""
+    from agents import ToolsToFinalOutputResult
+
+    if any(r.tool.name in _CONTINUE_TOOLS for r in results):
+        return ToolsToFinalOutputResult(is_final_output=False)  # let it chain/synthesise
+    out = results[-1].output if results else ""
+    return ToolsToFinalOutputResult(is_final_output=True, final_output=str(out))
+
+
 def describe() -> str:
     on_cerebras = config.agent_provider == "cerebras" and config.cerebras_api_key
     brain = f"Cerebras {config.cerebras_model}" if on_cerebras else f"OpenAI {config.cloud_agent_model}"
-    return f"OpenAI Agents SDK (single agent, {brain}, vision {config.vision_model})"
+    vision = config.cerebras_vision_model if on_cerebras else config.vision_model
+    return f"OpenAI Agents SDK (single agent, {brain}, vision {vision}, RAG on {brain})"

@@ -7,11 +7,19 @@ retrieval filtering and for citing the answer.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from jarvis.rag.extract import Section
+
+
+def _fmt_date(ts: float) -> str:
+    try:
+        return _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+        return ""
 
 
 @dataclass
@@ -42,7 +50,16 @@ def chunk_sections(
         "source": str(p),
         "filename": p.name,
         "ext": p.suffix.lower().lstrip("."),
+        "location": str(p.parent),          # where it lives on the device
     }
+    # timestamps: on macOS st_birthtime is the creation/download date.
+    try:
+        st = p.stat()
+        base["created"] = _fmt_date(getattr(st, "st_birthtime", st.st_ctime))   # ≈ downloaded
+        base["modified"] = _fmt_date(st.st_mtime)
+        base["indexed"] = _dt.datetime.now().strftime("%Y-%m-%d")
+    except OSError:
+        pass
     chunks: list[Chunk] = []
     idx = 0
     for sec in sections:

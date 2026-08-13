@@ -8,7 +8,9 @@ location. Collisions are auto-renamed ("file (1).pdf") so nothing is overwritten
 """
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
+import json
 import logging
 import shutil
 import subprocess
@@ -17,6 +19,8 @@ from pathlib import Path
 from jarvis.files.sandbox import Sandbox, SandboxError
 
 logger = logging.getLogger("jarvis.files")
+
+_OPENED_LOG = Path("~/.jarvis/opened.json").expanduser()
 
 CATEGORIES: dict[str, set[str]] = {
     "Documents": {".pdf", ".doc", ".docx", ".txt", ".md", ".rtf", ".odt", ".pages", ".tex"},
@@ -101,15 +105,44 @@ class FileOrganizer:
 
     # ── open ────────────────────────────────────────────────────────────────────
     def open_paths(self, paths: list[str], *, cap: int = 12) -> str:
-        opened = []
+        opened, opened_paths = [], []
         for path in paths[:cap]:
             p = self.sb.resolve(path, must_exist=True)
             subprocess.Popen(["open", str(p)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             opened.append(p.name)
+            opened_paths.append(str(p))
         if not opened:
             return "There was nothing to open, sir."
+        self._record_opened(opened_paths)
         extra = f" (+{len(paths) - cap} more)" if len(paths) > cap else ""
         return f"Opened {len(opened)} item(s): " + ", ".join(opened) + extra
+
+    # ── opened-date tracking (so "when did I open X" is answerable) ─────────────
+    @staticmethod
+    def _load_opened() -> dict[str, str]:
+        try:
+            return json.loads(_OPENED_LOG.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _record_opened(self, paths: list[str]) -> None:
+        log = self._load_opened()
+        now = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+        for p in paths:
+            log[p] = now
+        try:
+            _OPENED_LOG.parent.mkdir(parents=True, exist_ok=True)
+            _OPENED_LOG.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as e:
+            logger.debug("couldn't persist opened log: %s", e)
+
+    def last_opened(self, path: str) -> str:
+        """When JARVIS last opened this file ('YYYY-MM-DD HH:MM'), or '' if never."""
+        try:
+            key = str(self.sb.resolve(path))
+        except SandboxError:
+            key = path
+        return self._load_opened().get(key, "")
 
     def recent_files(self, folder: str, *, n: int = 5, exts: set[str] | None = None) -> list[Path]:
         root = self.sb.resolve(folder, must_exist=True)

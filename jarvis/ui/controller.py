@@ -30,6 +30,7 @@ class UIController:
         self._feed_seq = 0
         self._last_expl_body = ""  # to dedupe the spoken answer vs its explanation entry
         self._alarms: dict = {}  # id -> currently ringing alarm (shown as a popup)
+        self._focus: dict = {}   # current focus-mode session (technique/phase/countdown)
         # optional push hook — the WebSocket server registers this to deliver an
         # event to connected browsers the instant it's emitted (no polling).
         self._notifier = None
@@ -134,6 +135,20 @@ class UIController:
                 self._alarms.pop(alarm_id, None)
         self._emit({"type": "alarm_cleared", "id": alarm_id})
 
+    def show_focus(self, focus: dict) -> None:
+        """Show/refresh the focus-mode session card on the HUD (technique, current
+        work/break phase, countdown target, sprints done). Reveals the HUD."""
+        with self._lock:
+            self._revealed = True
+            self._focus = dict(focus or {})
+        self._emit({"type": "focus", "focus": self._focus})
+
+    def clear_focus(self) -> None:
+        """Remove the focus-mode card (session ended)."""
+        with self._lock:
+            self._focus = {}
+        self._emit({"type": "focus", "focus": {"active": False}})
+
     def is_revealed(self) -> bool:
         with self._lock:
             return self._revealed
@@ -180,6 +195,7 @@ class UIController:
             cursor = self._seq
             feed = list(self._feed)
             alarms = list(self._alarms.values())
+            focus = dict(self._focus)
         about = self._about()
         tasks = self._tasks_data()
         return {
@@ -192,6 +208,7 @@ class UIController:
             "todos": tasks["todos"],
             "agenda": tasks["agenda"],
             "alarms": alarms,
+            "focus": focus,
             "feed": feed,
             "events": events,
         }

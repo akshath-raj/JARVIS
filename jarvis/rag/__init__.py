@@ -14,7 +14,13 @@ __all__ = ["Embedder", "RAGPipeline", "VectorStore", "build_rag"]
 
 
 def build_rag(config) -> RAGPipeline:
-    """Construct a RAGPipeline from the JARVIS config."""
+    """Construct a RAGPipeline from the JARVIS config.
+
+    Retrieval embeddings stay local (Ollama) — Cerebras has no embeddings endpoint —
+    but the ANSWER is generated on Cerebras (gpt-oss-120b) when agent_provider is
+    "cerebras" and a key is set, for fast, uniform responses. Falls back to the
+    OpenAI answer model only if the Cerebras key is missing.
+    """
     embedder = Embedder(
         backend=config.rag_embed_backend,
         model=config.rag_embed_model,
@@ -22,9 +28,24 @@ def build_rag(config) -> RAGPipeline:
         openai_api_key=config.openai_api_key,
     )
     store = VectorStore(config.rag_index_dir, dim=config.embed_dims, embed_key=embedder.key)
+
+    use_cerebras = config.agent_provider == "cerebras" and bool(config.cerebras_api_key)
+    if use_cerebras:
+        answer_model = config.cerebras_model
+        answer_key = config.cerebras_api_key
+        answer_base_url = config.cerebras_base_url
+        answer_reasoning = "low"     # gpt-oss reasons; keep it minimal for speed
+    else:
+        answer_model = config.cloud_agent_model
+        answer_key = config.openai_api_key
+        answer_base_url = ""
+        answer_reasoning = ""
+
     return RAGPipeline(
         store, embedder,
-        answer_model=config.cloud_agent_model,
-        openai_api_key=config.openai_api_key,
+        answer_model=answer_model,
+        openai_api_key=answer_key,
+        answer_base_url=answer_base_url,
+        answer_reasoning=answer_reasoning,
         dirs=config.rag_dirs,
     )
