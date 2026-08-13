@@ -228,6 +228,14 @@ class Config:
     browser_local_max_steps: int = int(os.getenv("JARVIS_BROWSER_LOCAL_MAX_STEPS", "12"))
     browser_timeout: int = int(os.getenv("JARVIS_BROWSER_TIMEOUT", "240"))
     browser_headless: bool = _truthy(os.getenv("JARVIS_BROWSER_HEADLESS", "0"))
+    # DevTools port JARVIS uses to drive your REAL, VISIBLE Chrome (so "open Netflix
+    # and play my show" happens on your own profile, in front of you — not a hidden
+    # clone). If Chrome is already open without this port, JARVIS asks you to quit it
+    # once so it can relaunch it under control (your tabs restore).
+    browser_debug_port: int = int(os.getenv("JARVIS_BROWSER_DEBUG_PORT", "9222"))
+    # Interactive voice browser tasks drive your real visible Chrome via the port
+    # above. Set 0 to always use the background clone/headless path instead.
+    browser_attach_real: bool = _truthy(os.getenv("JARVIS_BROWSER_ATTACH_REAL", "1"))
     # Auto-solve captchas that block a task, using a LOCAL open-source vision model
     # (Qwen2.5-VL via Ollama) — no third-party service. Needs: ollama pull qwen2.5vl:7b.
     captcha_enabled: bool = _truthy(os.getenv("JARVIS_BROWSER_CAPTCHA", "1"))

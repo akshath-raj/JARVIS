@@ -30,6 +30,49 @@ def _chrome_running() -> bool:
         return False
 
 
+# ── drive the user's REAL, VISIBLE Chrome via the DevTools protocol ──────────
+def _cdp_up(port: int) -> str | None:
+    """Return the CDP url if a debuggable Chrome is listening on `port`, else None."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=1):
+            return f"http://127.0.0.1:{port}"
+    except Exception:
+        return None
+
+
+def _launch_real_chrome_debug(port: int) -> None:
+    """Launch the user's real profile, VISIBLE, with the DevTools port open so the
+    agent can drive it. Restores their previous tabs."""
+    subprocess.Popen(
+        [config.browser_chrome_path,
+         f"--remote-debugging-port={port}",
+         f"--user-data-dir={config.browser_user_data_dir}",
+         f"--profile-directory={config.browser_profile_dir}",
+         "--restore-last-session", "--no-first-run", "--no-default-browser-check"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+
+def _ensure_real_chrome() -> tuple[str | None, str | None]:
+    """Get a VISIBLE Chrome on the user's real profile we can drive; return
+    (cdp_url, blocker). Blocker is a spoken message when we can't proceed."""
+    import time
+    port = config.browser_debug_port
+    if (url := _cdp_up(port)):
+        return url, None                    # already drivable → attach
+    if _chrome_running():                   # open but not debuggable → must relaunch
+        return None, ("Sir, please quit Google Chrome once so I can reopen it under "
+                      "my control — your tabs come back, and after that I can open "
+                      "and play things on your own profile.")
+    _launch_real_chrome_debug(port)
+    for _ in range(24):                     # wait up to ~6s for the port to come up
+        if (url := _cdp_up(port)):
+            return url, None
+        time.sleep(0.25)
+    return None, "I couldn't start Chrome with remote control, sir."
+
+
 # Cache dirs (the bulk of a profile) we skip when cloning — not needed for logins.
 _CLONE_EXCLUDES = [
     "*Cache*/", "*/Service Worker/CacheStorage/", "*/Service Worker/ScriptCache/",
@@ -73,9 +116,11 @@ def _ollama_host() -> str:
 
 
 def _job(instruction: str, files=None, frontier_only: bool = False,
-         user_data_dir: str | None = None, headless: bool | None = None) -> dict:
+         user_data_dir: str | None = None, headless: bool | None = None,
+         cdp_url: str | None = None) -> dict:
     return {
         "task": instruction,
+        "cdp_url": cdp_url,  # set → attach to the user's real visible Chrome
         "chrome_path": config.browser_chrome_path,
         "user_data_dir": user_data_dir or config.browser_user_data_dir,
         "profile_directory": config.browser_profile_dir,
@@ -92,8 +137,16 @@ def _job(instruction: str, files=None, frontier_only: bool = False,
     }
 
 
-async def _run_job(instruction: str, *, files=None, frontier_only: bool, timeout: int) -> dict:
-    """Pick the effective profile (cloning if Chrome is open), then run the job."""
+async def _run_job(instruction: str, *, files=None, frontier_only: bool, timeout: int,
+                   attach: bool = False) -> dict:
+    """Run the job. `attach` (interactive tasks) drives the user's real VISIBLE Chrome
+    via CDP so they can see it; otherwise use the profile/clone path (background)."""
+    if attach and config.browser_attach_real:
+        cdp_url, blocker = await asyncio.to_thread(_ensure_real_chrome)
+        if blocker:
+            return {"ok": False, "result": "", "error": blocker}
+        job = _job(instruction, files=files, frontier_only=frontier_only, cdp_url=cdp_url)
+        return await _spawn(job, timeout)
     udd, headless, blocker = await asyncio.to_thread(_effective_profile)
     if blocker:
         return {"ok": False, "result": "", "error": blocker}
@@ -174,7 +227,8 @@ async def _spawn(job: dict, timeout: int) -> dict:
 
 
 async def _execute(instruction: str) -> str:
-    res = await _run_job(instruction, frontier_only=False, timeout=config.browser_timeout)
+    # interactive voice task → drive the user's real, visible Chrome
+    res = await _run_job(instruction, frontier_only=False, timeout=config.browser_timeout, attach=True)
     if res.get("result"):
         return res["result"]
     if res.get("error"):
