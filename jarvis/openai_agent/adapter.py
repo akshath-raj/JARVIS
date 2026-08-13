@@ -9,8 +9,8 @@ Each turn:
   1. LiveKit hands us the running `ChatContext`.
   2. We convert it to Agents-SDK input items and inject the most relevant long-term
      memories (personalisation, matching the LangGraph brain).
-  3. `Runner.run_streamed` executes the triage agent, which may hand off to a
-     specialist; we stream the final agent's text deltas straight to TTS.
+  3. `Runner.run` executes the agent (which may call several tools in sequence) and
+     we speak ONLY its final answer — never intermediate reasoning or tool preambles.
 """
 from __future__ import annotations
 
@@ -30,8 +30,6 @@ from livekit.agents.types import (
     APIConnectOptions,
     NotGivenOr,
 )
-from openai.types.responses import ResponseTextDeltaEvent
-
 from jarvis.openai_agent.brain import BrainContext
 
 logger = logging.getLogger("jarvis.openai_agent.adapter")
@@ -87,32 +85,22 @@ class _AgentsStream(llm.LLMStream):
         ctx = BrainContext(memory=self._memory, memory_block=block)
 
         request_id = str(uuid4())
-        result = Runner.run_streamed(
+        # Run to completion and speak ONLY the final answer — we deliberately do NOT
+        # stream token deltas. The brain is a reasoning model (gpt-oss) in a
+        # multi-tool loop: between/around tool calls it can emit reasoning and tool
+        # PREAMBLES as assistant text ("now the user will provide us input"), and
+        # streaming every delta pushed that plumbing straight to TTS. `final_output`
+        # is the clean final message (or a stop-tool's return string), so voicing
+        # just that keeps intermediate thinking out of the speaker.
+        result = await Runner.run(
             self._brain, input=items or last_user or "", context=ctx, max_turns=8
         )
-        streamed = False
-        async for event in result.stream_events():
-            # Stream only the natural-language text the agents produce; tool calls
-            # and handoffs carry no text so they're naturally excluded from TTS.
-            if event.type == "raw_response_event" and isinstance(
-                event.data, ResponseTextDeltaEvent
-            ):
-                delta = _clean(event.data.delta)
-                if delta:
-                    streamed = True
-                    self._event_ch.send_nowait(
-                        ChatChunk(id=request_id, delta=ChoiceDelta(role="assistant", content=delta))
-                    )
-        # Leaf specialists use stop_on_first_tool: the tool's return string IS the
-        # final output and no text is streamed — so speak it directly (one fewer LLM
-        # round-trip per action). This is also a safety net against silent turns.
-        if not streamed:
-            final = getattr(result, "final_output", None)
-            text = _clean(str(final).strip()) if final is not None else ""
-            if text:
-                self._event_ch.send_nowait(
-                    ChatChunk(id=request_id, delta=ChoiceDelta(role="assistant", content=text))
-                )
+        final = getattr(result, "final_output", None)
+        text = _clean(str(final).strip()) if final is not None else ""
+        if text:
+            self._event_ch.send_nowait(
+                ChatChunk(id=request_id, delta=ChoiceDelta(role="assistant", content=text))
+            )
 
 
 class OpenAIAgentsLLM(llm.LLM):

@@ -101,7 +101,14 @@ _GUIDE = (
     "device ACTION (play/pause/open/move/reminder) reply in ONE short sentence; but "
     "when ANSWERING or EXPLAINING (explain_this/explain_screen/ask_documents/"
     "summarize_document/web_search) give the FULL answer — do not compress a detailed "
-    "explanation into one sentence. Ask a question only if an essential detail is missing."
+    "explanation into one sentence. Ask a question only if an essential detail is missing. "
+    "To make QUESTIONS / a quiz / flashcards / to test the user on what they are "
+    "reading or on a document, first call explain_this (for what's on their screen) or "
+    "ask_documents/summarize_document (by name) to get the content, then write the "
+    "questions yourself from it. "
+    "NEVER speak your plan, reasoning, or tool mechanics out loud: do not say things "
+    "like 'now I will…', 'let me call…', or 'the user will provide input'. Say nothing "
+    "until you have the result, then reply with only the answer or a short confirmation."
 )
 
 
