@@ -1,184 +1,203 @@
-# JARVIS — a voice AI assistant (local-first, cloud-optional)
+# JARVIS — a voice AI assistant for macOS
 
 A voice-enabled assistant in the spirit of Iron Man's JARVIS. Wake it with
-**"Hey Jarvis,"** ask general questions, and control apps — Spotify for music and
-Chrome for the browser/web. It runs **fully local by default**, or can switch to a
-cloud pipeline.
+**"Hey Jarvis,"** talk to it, and it controls your Mac: plays music, drives the
+browser, reads and explains what's on your screen, answers questions from your own
+documents, manages a calendar and reminders, organises your files, and runs a
+focus-assist mode that closes distractions — all narrated back to you, with a
+hidden **Iron-Man-style HUD** that appears on launch.
 
-The brain is a **LangGraph** react-style agent (all tools bound to one local model)
-that also **remembers you over time**. It answers general facts itself, controls
-Spotify, drives Chrome, and searches the web:
+It runs **cloud-first by default** (fast, hosted models) and can also run **fully
+on-device**. One agent holds every tool and chains them for multi-step requests
+(*"explain this graph and check the 2026 numbers"* → looks at your screen, then
+searches the web, then answers).
 
-- *"play despacito"*, *"pause"*, *"play my liked songs"* → Spotify.
-- *"open instagram"*, *"play some lofi on youtube"*, *"open a new MrBeast video"*,
-  *"show me some reels"* → Chrome.
-- *"what's the latest news on X"*, *"current price of bitcoin"* → web search
-  (Tavily). Set `TAVILY_API_KEY` in `.env`.
-- *"download my OS study materials by Prof X from VTOP"*, *"check my AWS balance"* →
-  the **browser agent** ([browser-use](https://github.com/browser-use/browser-use))
-  drives your **real logged-in Chrome** and does the multi-step workflow, then
-  speaks the result. One-time setup: `bash scripts/setup_browser_agent.sh`.
+---
 
-  The browser agent runs in an **isolated venv** (`.venv-browser`, invoked
-  out-of-process) because its deps conflict with the LiveKit/LangGraph stack. It
-  uses your **real Chrome profile** (saved logins/passwords), so **Chrome must be
-  closed** when a task runs — JARVIS will ask you to close it otherwise. Reasoning
-  uses a frontier model (`gpt-4.1-mini` via `OPENAI_API_KEY`) because local models
-  can't drive a browser reliably. ⚠️ Two conscious tradeoffs: **browsed page
-  content goes to OpenAI**, and with **full autonomy on your logged-in profile** a
-  malicious page could prompt-inject the agent — it runs only when you ask, with
-  step/time caps, but no per-action confirmations. It fills forms, clicks, uploads
-  files, logs in (via your saved sessions/passwords), and fetches info. If a
-  **captcha** blocks a task, it auto-solves distorted-text/image captchas with a
-  **local open-source vision model** (Qwen2.5-VL via Ollama — free, private, no
-  service): `ollama pull qwen2.5vl:7b` (toggle `JARVIS_BROWSER_CAPTCHA`). It runs
-  headless on a **clone of your Chrome profile** so it works even while your Chrome
-  is open (`JARVIS_BROWSER_CLONE_PROFILE=auto`).
-- *"download the latest assignment from VTOP and explain it"* → *"finish it, make it
-  a jupyter notebook"* → *"open it"* → the **assignment workflow**: JARVIS downloads
-  the document (browser agent), **reads and explains it aloud** (local model), then
-  hands it to an **AI to complete** it, **assembles the answer file** in the format
-  you asked for (`.ipynb`/`.docx`/`.pptx`/`.py`), announces it's done, and **opens it**
-  in the right app (Preview / Word / PowerPoint / VS Code).
+## Contents
+- [Feature overview](#feature-overview)
+- [Two pipelines (`JARVIS_MODE`)](#two-pipelines-jarvis_mode)
+- [Quick start](#quick-start)
+- [Setup & API keys](#setup--api-keys)
+- [macOS permissions](#macos-permissions)
+- [Configuration reference](#configuration-reference)
+- [Architecture](#architecture)
+- [Privacy & safety](#privacy--safety)
 
-  Which AI does the work is chosen by availability, in your preferred order
-  (`JARVIS_AI_APP_ORDER`, default `claude_desktop,browser`). The **Claude desktop app**
-  is used only if it's installed, macOS **Accessibility** is granted to JARVIS, and
-  `JARVIS_CLAUDE_DESKTOP=1` (it's Electron UI-automation — experimental, and answer
-  extraction is unreliable); otherwise it **falls back to the browser** (claude.ai, your
-  logged-in Pro session, driven by the browser agent). The assignment content goes to
-  whichever AI completes it; the explain step is local.
+---
 
-**Persistent memory (GPT-style, fully local).** JARVIS learns what you like from
-what you do (songs played, sites/searches), from explicit *"remember that I…"*, and
-from durable facts mined out of conversation in the background. Relevant memories
-are recalled each turn to personalise replies — ask *"play me something I'd enjoy"*
-or *"what do you know about me?"*, and *"forget that…"* to remove one. Memories live
-in `~/.jarvis/memory/` (local JSON + Ollama embeddings); nothing leaves the machine.
-Needs an embedding model: `ollama pull nomic-embed-text`.
+## Feature overview
 
-Why one agent with all tools rather than multi-agent handoffs? On local models,
-agent handoffs are slow and make the model speak plumbing / narrate instead of
-calling tools (measured). A single shallow graph is fast (~2–4s/action) and
-reliable. Set `JARVIS_ORCHESTRATOR=native` to fall back to the previous
-hand-rolled agent.
+Everything below is available with the default `openai` brain (a single agent on
+Cerebras/OpenAI). Say the wake word, then your request.
 
-## Two modes (`JARVIS_MODE`)
+### 🎵 Music (Spotify)
+Playback runs **in the background** (launched hidden, driven by AppleScript) so it
+never steals focus. Needs the Spotify desktop app installed + logged in.
+- *"play Bohemian Rhapsody by Queen"*, *"pause"*, *"skip"*, *"louder"*, *"what's playing?"*
+- *"loop this"*, *"play Weightless on repeat"*
+- Playlists — *"what playlists do I have"*, *"play my Focus playlist"*, *"add this to Favourites"*
+- Your library — *"play my most-played song"*, *"my top songs/artists"*, *"my liked songs"*, *"what did I play recently"*
 
-| | `0` LOCAL (default) | `1` CLOUD |
+### 🌐 Browser & web (Chrome)
+- *"open instagram"*, *"play some lofi on youtube"*, *"open a new MrBeast video"*, *"show me reels"*
+- Live info via **Tavily** web search — *"latest news on X"*, *"current price of bitcoin"*, *"weather tomorrow"*
+- **Browser agent** (logged-in, multi-step workflows) — *"download my OS notes from VTOP"*,
+  *"check my AWS balance"*. Drives your **real Chrome profile** via
+  [browser-use](https://github.com/browser-use/browser-use) in an isolated venv.
+  One-time setup: `bash scripts/setup_browser_agent.sh`.
+- **Assignment workflow** — *"download the latest assignment and explain it"* →
+  *"finish it as a notebook"* → *"open it"*: downloads, explains aloud, has an AI
+  complete it, assembles the file, and opens it.
+
+### 🖥️ Screen vision & on-screen document help
+- *"what's on my screen?"*, *"explain this error"*, *"read this for me"* → screenshots
+  and explains what's displayed (`show_in_ui` renders it on the HUD).
+- *"explain this topic, I don't understand it"* → knows **which document is live on
+  screen**, works out the **page/slide** you're on, and reads the **surrounding
+  pages of that subtopic** from your indexed files (not just the visible screenshot)
+  to explain it properly.
+
+### 📄 Your documents (local RAG)
+JARVIS indexes your PDFs / Word / PowerPoint / notes into a **local, self-updating
+vector store** (new downloads added, changed files re-embedded, deleted files
+dropped — without re-embedding everything). Ask about them by **description — no
+exact filename needed**:
+- *"what does my machine-learning assignment say about backprop?"*, *"explain page 4 of my calculus notes"*
+- *"summarise my thermodynamics notes"*, *"what's slide 5 about"*
+- *"open my OS notes"* (opens the right file), *"where's my budget spreadsheet / when did I download it"*
+- If several files match, JARVIS reads back the top few and asks which one.
+
+Embeddings are **local** (Ollama `nomic-embed-text`); answering runs on Cerebras.
+Re-scan happens automatically; force a full rebuild with `python scripts/reindex_rag.py`.
+
+### 🗂️ Sandboxed file organiser
+Read / copy / move / open — and tidy folders into category subfolders. **Never
+deletes anything** (duplicates are moved aside), and is **confined to your home
+folder** (it can't move files outside the sandbox).
+- *"organise my downloads"*, *"move X to Y"*, *"open my recent downloads"*, *"what's in my Documents"*
+
+### 📅 Calendar, to-dos, reminders & alarms
+Time-aware: computes absolute times from natural language.
+- *"remind me to submit the assignment at 9pm"*, *"remind me in an hour"*, *"add milk to my to-do list"*
+- A due reminder **rings a looping alarm**, pops up on the HUD (STOP / MARK DONE), and speaks. *"Jarvis, stop the alarm"* / *"I'm done with X"*.
+
+### 🎯 Focus assist mode
+- *"focus mode"*, *"start a pomodoro"*, *"deep work session"* → **closes every open
+  distraction** (Instagram, YouTube, Netflix, TikTok, Reddit, X, …), starts a timer,
+  and **keeps closing anything distracting you reopen** — announcing it — until you
+  say *"end focus mode"*. If you ask it to open a blocked site, it refuses.
+- Techniques: **pomodoro** (25/5), **classic** (50/10), **52-17**, **90-20** (ultradian), **flowtime**.
+- Shown live on the HUD with a countdown, phase (work/break), and sprint count.
+
+### 🟦 The HUD dashboard
+A hidden Iron-Man-style interface that **opens automatically on launch** (⌄ HIDE
+button to dismiss; say *"show the dashboard"* to bring it back). Shows your
+profile/memories, past conversations, agenda & to-dos, a **live Q&A feed** of
+everything you ask and every answer, **rendered explanations** (e.g. a screen
+analysis with the captured image), the **focus timer**, and **alarm pop-ups**.
+Served locally only.
+
+### 🧠 Persistent memory (local)
+Learns what you like from what you do, from *"remember that I…"*, and from facts
+mined out of conversation in the background — recalled each turn to personalise
+replies. *"play me something I'd enjoy"*, *"what do you know about me?"*, *"forget that…"*.
+Lives in `~/.jarvis/memory/` (local JSON + Ollama embeddings).
+
+---
+
+## Two pipelines (`JARVIS_MODE`)
+
+| | `1` CLOUD (default) | `0` LOCAL |
 |---|---|---|
-| STT | Whisper mlx (`small.en`) | Deepgram `nova-3` |
-| LLM | Ollama `qwen2.5:7b-instruct` | Cerebras `gpt-oss-120b` → OpenAI |
-| TTS | Kokoro-82M | Deepgram Aura-2 (`aura-2-draco-en`) |
+| **STT** | Deepgram `nova-3` (streaming) | Whisper mlx (`small.en`) |
+| **Brain** | Cerebras `gpt-oss-120b` → OpenAI | Ollama `qwen2.5:7b-instruct` |
+| **Vision** | Cerebras `gemma-4-31b` → gpt-4o | (uses the cloud vision key) |
+| **TTS** | Deepgram Aura-2 (`aura-2-draco-en`) | Kokoro-82M |
 
-LOCAL keeps everything on-device — nothing the mic captures leaves the machine
-(the only egress is the optional Spotify catalog search, a song title). CLOUD
-mirrors the reference "live JARVIS" stack; the LLM prefers Cerebras and falls
-back to OpenAI based on which API key is set.
+**CLOUD** is fast and hosted (audio → Deepgram, text/tools → Cerebras). **LOCAL**
+keeps the voice loop fully on-device (Whisper + Kokoro + Ollama); the only egress
+is the optional Spotify catalog search (a song title). Note that document RAG and
+long-term memory always use **local** Ollama embeddings in either mode.
 
-## Architecture
+---
 
-Voice pipeline (all local):
-```
-mic ─► Silero VAD ─► Whisper STT ─► LangGraph brain (Ollama + memory) ─► Kokoro TTS ─► speaker
-```
+## Quick start
 
-Activation: **wake word with smart follow-up**.
-```
-mic ─► VAD/turn-detect ─► STT ─► [wake gate] ─► LLM ─► TTS ─► speaker
-                                  awake?  ── no ──► ignore
-```
-Say **"jarvis"** or **"hey jarvis"** to activate (the wake word is stripped, so
-"jarvis play some jazz" just plays jazz). The clever bit:
+**Clickable launcher (no terminal):** double-click **`scripts/Start JARVIS.command`**
+in Finder, or build a proper Mac app with `bash scripts/make_app.sh` (creates
+`~/Applications/JARVIS.app` — drag it to your Dock). First launch: right-click ▸
+**Open** to get past Gatekeeper.
 
-- If JARVIS's reply is a **clarification question** ("Which playlist?"), it stays
-  awake — you answer directly, no wake word.
-- If JARVIS's reply is an **answer/statement**, it goes back to sleep — say the
-  wake word again for the next request.
-
-Transcript-based (so both "jarvis" and "hey jarvis" work). Configure with
-`JARVIS_WAKE_WORDS` (comma-separated), `JARVIS_WAKE_FOLLOWUP` (window seconds), or
-disable with `JARVIS_WAKE=0` to reply to everything.
-
-### Performance / quantization
-All local LLMs run **Q4_K_M** (4-bit quantized) weights via Ollama. For faster
-inference, enable Flash Attention and a **quantized KV cache** on the Ollama
-server (big win on Apple Silicon, less memory per token):
+**Terminal:**
 ```bash
-launchctl setenv OLLAMA_FLASH_ATTENTION 1
-launchctl setenv OLLAMA_KV_CACHE_TYPE q8_0   # or q4_0 for even less memory
-brew services restart ollama
+source .venv/bin/activate
+python -m jarvis.agent console
 ```
-STT uses `fp16` mlx-whisper on Metal. Want lighter still? Point a model env at a
-lower-bit tag, e.g. `JARVIS_RELEVANCE_MODEL=qwen3:1.7b-q4_0`.
+Say **"Hey Jarvis,"** then your request (follow-ups within ~20s skip the wake word):
+*"Play Bohemian Rhapsody."* · *"What's on my screen?"* · *"Focus mode."* ·
+*"Summarise my OS notes."* · *"Remind me to submit at 9pm."* · *"What's on my calendar?"*
 
-### Model (local)
-The local LLM is **`qwen2.5:7b-instruct`** (`OLLAMA_MODEL`). It's non-thinking, so
-tool calls are immediate — Qwen3 is a *reasoning* model that emits a 10–40s
-"thinking" trace before every tool call (unusable for voice). 7B is reliable at
-tool-calling on arbitrary songs; drop to `qwen2.5:3b-instruct` for speed (less
-reliable) or up for more quality.
+---
 
-### One agent, not a mesh
-JARVIS is a **single agent** that answers questions and controls Spotify. An
-earlier router+specialist handoff design was removed: with local models, agent
-handoffs were unreliable — after a handoff the model would emit the tool call as
-plain text instead of executing it. Two hard-won lessons baked in here:
-- **Single agent + all tools** executes reliably; handoffs don't (locally).
-- **Keep the system prompt lean and behavioral.** Enumerating tools/JSON in the
-  prompt makes local models *narrate* the call ("now playing X") without actually
-  calling the tool. The tool docstrings describe usage; the prompt just sets
-  behavior.
+## Setup & API keys
 
-### Spotify capabilities
-Playback runs **in the background** — Spotify is launched hidden (`open -g -j`) and
-driven by AppleScript, and every call runs in a worker thread, so it never steals
-focus or keystrokes from what you're doing.
-
-- Search & play a song — *"play Bohemian Rhapsody by Queen"*
-- Loop / repeat the current song — *"loop this"* / *"play Weightless on repeat"*
-- Pause / resume / skip / volume / what's playing
-- Playlists — *"what playlists do I have"*, *"play my Focus playlist"*, *"add this to my Favourites"*
-- **Your library** — *"play my most played song"*, *"what are my top songs"*,
-  *"list my liked songs"*, *"play one of my favourites"*, *"who are my top
-  artists"*, *"what did I listen to recently"*
-
-Song search needs the client-credentials key. **Playlist & library features**
-(your playlists, top tracks, liked songs, recently played) need a one-time user
-login — re-run this whenever new scopes are added:
-```bash
-# add http://127.0.0.1:8080/callback to your app's Redirect URIs, then:
-python -m jarvis.spotify_auth
-```
-Scopes requested: playlist read/modify, `user-top-read`, `user-library-read`,
-`user-read-recently-played`.
-
-### Sandboxing
-The only capability that touches your machine is **Spotify** (play / playlists /
-loop / add-to-playlist / pause / skip / volume / now-playing). There are **no
-file, shell, calendar, or delete/remove tools** exposed to any model — nothing
-can delete tracks or playlists (the Spotify surface has no destructive op).
-ChatAgent answers from the model's own knowledge only. Any URI interpolated into
-AppleScript is regex-validated (`spotify:{track,playlist,album,artist}:…`) first,
-so it can't be used for injection.
-
-## Setup
-
-### 1. Ollama + the LLM
-```bash
-brew install ollama
-ollama serve            # leave running (or: brew services start ollama)
-ollama pull qwen3:8b
-```
-
-### 2. Python environment
+### 1. Python environment (Python 3.11+; 3.13 tested)
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env      # then fill in keys below
 ```
 
-### 3. Kokoro voice model (download once, ~350 MB)
+### 2. Cloud keys — needed for the default pipeline
+| Service | Used for | Get a key |
+|---|---|---|
+| **Cerebras** | the brain + RAG answering + screen vision (fast) | [cloud.cerebras.ai](https://cloud.cerebras.ai) · [docs](https://inference-docs.cerebras.ai) |
+| **Deepgram** | speech-to-text + text-to-speech | [console.deepgram.com/signup](https://console.deepgram.com/signup) |
+
+Put them in `.env`:
+```ini
+CEREBRAS_API_KEY=csk-...
+DEEPGRAM_API_KEY=...
+```
+That's the minimum for a talking assistant in cloud mode.
+
+### 3. Ollama — for embeddings (RAG + memory), and for LOCAL mode
+Document RAG and long-term memory use a **local** embedding model, so install
+Ollama even in cloud mode:
+```bash
+brew install ollama
+ollama serve                        # or: brew services start ollama
+ollama pull nomic-embed-text        # embeddings for RAG + memory
+# LOCAL mode (JARVIS_MODE=0) also needs a chat model:
+ollama pull qwen2.5:7b-instruct
+```
+Ollama: [ollama.com](https://ollama.com). The clickable launcher starts `ollama serve` for you if it's installed.
+
+### 4. Optional keys — unlock more features
+| Service | Unlocks | Get a key |
+|---|---|---|
+| **OpenAI** | fallback brain/vision; the browser agent & assignment workflow | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| **Tavily** | live web search (news, prices, weather) | [app.tavily.com](https://app.tavily.com) (free tier) |
+| **Spotify** | music search, playlists & library | [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) |
+
+```ini
+OPENAI_API_KEY=sk-...
+TAVILY_API_KEY=tvly-...
+SPOTIFY_CLIENT_ID=...
+SPOTIFY_CLIENT_SECRET=...
+```
+
+**Spotify playlists & library** need a one-time user login (search alone only needs
+the client id/secret). Add `http://127.0.0.1:8080/callback` to your app's Redirect
+URIs, then:
+```bash
+python -m jarvis.spotify_auth
+```
+
+### 5. LOCAL-mode voice model (only if you set `JARVIS_MODE=0`)
+Download the Kokoro TTS files once (~350 MB):
 ```bash
 curl -L -o models/kokoro-v1.0.onnx \
   https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
@@ -186,32 +205,98 @@ curl -L -o models/voices-v1.0.bin \
   https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 ```
 
-### 4. Spotify credentials (for search only)
-Create a free app at https://developer.spotify.com/dashboard, then:
+### 6. Browser agent (optional — logged-in web workflows)
+Runs in a separate venv because its deps conflict with the main stack:
 ```bash
-cp .env.example .env
-# fill in SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET
+bash scripts/setup_browser_agent.sh
+# optional local captcha solver: ollama pull qwen2.5vl:7b
 ```
-Make sure the **Spotify desktop app is installed and logged in** (Premium recommended).
+Reasoning uses a frontier model via `OPENAI_API_KEY`. ⚠️ It drives your **real
+logged-in Chrome**, so browsed page content goes to OpenAI and a malicious page
+could prompt-inject it — it runs only when you ask, with step/time caps.
 
-## Run
-```bash
-source .venv/bin/activate
-python -m jarvis.agent console
+---
+
+## macOS permissions
+
+Grant these to your terminal (or `JARVIS.app`) under **System Settings ▸ Privacy &
+Security** — most are prompted on first use:
+
+- **Microphone** — to hear you.
+- **Screen Recording** — for *"explain my screen"* and on-screen document help.
+- **Automation** — to control Google Chrome & System Events (browser control,
+  media control, **focus mode** closing tabs).
+- **Accessibility** — lets JARVIS read the *focused window's title* so it knows
+  which open document you mean (falls back gracefully without it).
+
+---
+
+## Configuration reference
+
+All settings live in **`.env`** (copied from **`.env.example`**, which documents
+every option). The essentials:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `JARVIS_MODE` | `1` | `1` cloud, `0` local |
+| `JARVIS_ORCHESTRATOR` | `openai` | full-featured single-agent brain (or `langgraph` / `native`) |
+| `JARVIS_AGENT_PROVIDER` | `cerebras` | `cerebras` (fast) or `openai`; falls back to OpenAI if no Cerebras key |
+| `JARVIS_WAKE` / `JARVIS_WAKE_WORDS` | `1` / `jarvis,…` | wake word on/off + trigger words |
+| `JARVIS_UI` | `1` | HUD dashboard (auto-opens on launch) |
+| `JARVIS_RAG` / `JARVIS_RAG_DIRS` | `1` / Downloads,Documents,Desktop | document indexing + which folders |
+| `JARVIS_FILES` / `JARVIS_FILES_SANDBOX` | `1` / `~` | file organiser + sandbox root |
+| `JARVIS_SCHEDULER` | `1` | calendar / to-dos / reminders / alarms |
+| `JARVIS_FOCUS` / `JARVIS_FOCUS_TECHNIQUE` | `1` / `pomodoro` | focus mode + default technique |
+| `JARVIS_BROWSER_AGENT` | `1` | logged-in browser workflows |
+
+Model tuning (`CEREBRAS_MODEL`, `JARVIS_CEREBRAS_VISION_MODEL`, `WHISPER_MODEL`,
+`OLLAMA_MODEL`, endpointing delays, RAG scan cadence, focus blocklist, …) is all in
+`.env.example` with inline notes.
+
+---
+
+## Architecture
+
 ```
-Say **"Hey Jarvis"**, then your request (follow-ups within ~12s skip the wake word):
-*"Play Bohemian Rhapsody by Queen."* · *"Pause."* · *"What's playing?"* ·
-*"What's on my calendar today?"* · *"Find my budget spreadsheet."* ·
-*"What's the tallest mountain in the world?"*
+                 ┌─────────── LiveKit voice pipeline ───────────┐
+mic ─► VAD ─► STT ─► [wake gate] ─► BRAIN (agent + tools + memory) ─► TTS ─► speaker
+                                        │
+        ┌───────────────────────────────┼───────────────────────────────┐
+     Spotify   Browser/Web   Screen vision   Documents(RAG)   Files
+     Calendar/Reminders     Focus mode      HUD dashboard     Memory
+```
 
-Set `JARVIS_WAKE=0` for always-listening, or `JARVIS_MODE=1` (with cloud keys in
-`.env`) for the cloud pipeline.
+- **Wake word with smart follow-up:** say *"jarvis"* / *"hey jarvis"* to activate
+  (the word is stripped). After a **clarifying question** JARVIS stays awake so you
+  answer directly; after a normal answer it sleeps until the next wake word.
+  `JARVIS_WAKE=0` replies to everything.
+- **One agent, all tools:** a single agent holds every capability. Device actions
+  resolve in one fast round-trip; informational tools keep the loop open so
+  multi-step requests complete and are synthesised into one answer. `gpt-oss` runs
+  at low reasoning effort for speed (~0.5–0.8s/step on Cerebras).
+- **Custom LiveKit LLM adapter:** the whole agent framework is plugged in as the
+  LLM node of the STT→LLM→TTS pipeline; STT/TTS are unchanged.
 
-## Roadmap
-- [x] Local voice loop + Spotify search/play
-- [x] Multi-agent handoff mesh (router + Chat/Music/Calendar/Files)
-- [x] Wake word ("Hey Jarvis") via openWakeWord
-- [x] mlx-whisper (Metal) fast local STT backend
-- [x] Cloud mode (Deepgram STT+TTS + Cerebras/OpenAI)
-- [ ] More apps (mail, messages, system control)
-- [ ] Persistent long-term memory (RAG)
+---
+
+## Privacy & safety
+
+- **File organiser can never delete** — only read / copy / move / open — and is
+  **sandboxed to your home folder** (enforced structurally; there are no
+  delete/remove operations anywhere in the file layer).
+- **Local by default where it matters:** document embeddings and long-term memory
+  are computed locally (Ollama) and stored as local JSON under `~/.jarvis/`.
+- **LOCAL mode** (`JARVIS_MODE=0`) keeps the entire voice loop on-device.
+- **`.env` holds secrets and is gitignored** — never commit it.
+- **Cloud egress, made explicit:** in cloud mode, audio goes to Deepgram and your
+  text/tool calls + screenshots go to Cerebras/OpenAI. The browser agent sends
+  browsed page content to OpenAI and acts on your logged-in sessions.
+
+---
+
+## Handy scripts
+- `scripts/Start JARVIS.command` — double-click launcher.
+- `scripts/make_app.sh` — build `JARVIS.app`.
+- `scripts/setup_browser_agent.sh` — install the isolated browser-agent venv.
+- `scripts/reindex_rag.py` — force a full document re-index.
+- `python -m jarvis.spotify_auth` — authorise Spotify playlists/library.
