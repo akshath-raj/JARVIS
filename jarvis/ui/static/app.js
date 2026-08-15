@@ -349,7 +349,7 @@ function applyEvent(ev) {
   }
 }
 
-let lastState = { user: "Akshath" };
+let lastState = { user: "" };  // placeholder until the server sends the real name
 async function maybeReveal(state) {
   if (booted) return;
   if (!(state && (state.revealed || revealPending))) return;

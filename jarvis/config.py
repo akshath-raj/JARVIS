@@ -24,6 +24,26 @@ def _truthy(val: str) -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on", "cloud")
 
 
+def _default_user_name() -> str:
+    """The name shown in the HUD's "Welcome back, ___" — detected from the current
+    macOS account so every install greets its OWN user, not whoever built it. Falls
+    back to the login name, then a neutral word. Override with JARVIS_UI_USER."""
+    import getpass
+
+    try:  # macOS full name (GECOS), e.g. "Jane Doe" → "Jane"
+        import pwd
+
+        full = pwd.getpwuid(os.getuid()).pw_gecos.split(",")[0].strip()
+        if full:
+            return full.split()[0]
+    except Exception:
+        pass
+    try:
+        return getpass.getuser().capitalize()
+    except Exception:
+        return "there"
+
+
 @dataclass(frozen=True)
 class Config:
     # ── Mode ───────────────────────────────────────────────────────────
@@ -155,7 +175,7 @@ class Config:
     # analysis) on screen. Served locally; nothing leaves the machine.
     ui_enabled: bool = _truthy(os.getenv("JARVIS_UI", "1"))
     ui_port: int = int(os.getenv("JARVIS_UI_PORT", "8137"))
-    ui_user: str = os.getenv("JARVIS_UI_USER", "Akshath")
+    ui_user: str = os.getenv("JARVIS_UI_USER") or _default_user_name()
 
     # ── Document RAG (local embeddings + self-updating vector store) ───
     # JARVIS indexes your documents (PDF/DOCX/PPTX/TXT/MD) and answers questions
