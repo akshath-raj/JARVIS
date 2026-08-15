@@ -18,3 +18,6 @@ models/*.bin
 
 # local launch/marketing notes (not for the public repo)
 LAUNCH_KIT.md
+
+# Playwright MCP session snapshots (transient)
+.playwright-mcp/

@@ -16,8 +16,10 @@ from agents import function_tool
 from jarvis.browser_agent.client import run_browser_task
 from jarvis.tools.browser import BrowserController, BrowserError
 from jarvis.tools.media import MediaController, MediaError
+from jarvis.tools.reading_mode import ReadingMode
 from jarvis.tools.screen import ScreenController, ScreenError
 from jarvis.tools.spotify import SpotifyController, SpotifyError
+from jarvis.tools.system_settings import SettingsError, SystemSettings
 from jarvis.tools.web import TavilyClient, WebError
 
 
@@ -113,19 +115,20 @@ def build_music_tools(*, spotify: SpotifyController, memory, search_mode: str = 
 
     @function_tool
     async def set_music_volume(level: int) -> str:
-        """Set Spotify volume to an EXACT level (0-100). Use only when the user gives
-        a number, e.g. 'set volume to 40'."""
+        """Set the SPOTIFY MUSIC volume to an EXACT level (0-100). Use ONLY when the
+        user explicitly means the music/song/Spotify ('set the music to 40', 'Spotify
+        volume to 50'). For a plain 'set the volume to 40' use set_system_volume."""
         try:
             await asyncio.to_thread(spotify.set_volume, level)
-            return f"volume set to {level}"
+            return f"music volume set to {level}"
         except SpotifyError as e:
             return f"error: {e}"
 
     @function_tool
     async def change_volume(direction: str) -> str:
-        """Turn the music volume UP or DOWN relative to now. Use for 'increase/turn up/
-        louder' (direction='up') or 'decrease/turn down/quieter' (direction='down') when
-        the user gives no exact number."""
+        """Turn the SPOTIFY MUSIC volume UP or DOWN. Use ONLY when the user explicitly
+        means the music/song/Spotify ('turn the music up', 'make the song quieter').
+        For a plain 'louder'/'turn it down'/'volume up' use change_system_volume."""
         up = any(w in direction.lower() for w in ("up", "loud", "increase", "higher", "raise", "more"))
         try:
             level = await asyncio.to_thread(spotify.nudge_volume, up)
@@ -898,3 +901,125 @@ def build_triage_tools(*, tavily: TavilyClient, memory) -> list:
         return await asyncio.to_thread(memory.recall_text)
 
     return [web_search, remember, forget, recall_about_me]
+
+
+# ── System settings (the Mac's own brightness & sound) ────────────────────
+def build_system_tools(*, system: SystemSettings, memory=None) -> list:
+    def _log(msg: str) -> None:
+        if memory is not None:
+            memory.log_activity(msg)
+
+    @function_tool
+    async def set_brightness(percent: int) -> str:
+        """Set the LAPTOP SCREEN brightness to a percentage, 0–100 ('brightness to
+        40%', 'dim the screen to 20', 'brightness max'). This is the Mac's DISPLAY
+        brightness, not a video's."""
+        def _do():
+            frac = system.set_brightness(max(0, min(100, percent)) / 100.0)
+            _log(f"set screen brightness to {percent}%")
+            return f"screen brightness set to {round(frac * 100)}%"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def change_brightness(up: bool) -> str:
+        """Nudge the LAPTOP SCREEN brightness up or down a step ('brighter',
+        'dimmer', 'turn the screen up/down')."""
+        def _do():
+            frac = system.nudge_brightness(up)
+            _log(f"turned screen brightness {'up' if up else 'down'}")
+            if frac is None:
+                return f"screen a bit {'brighter' if up else 'dimmer'}"
+            return f"screen brightness {'up' if up else 'down'} to {round(frac * 100)}%"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def set_system_volume(percent: int) -> str:
+        """Set the LAPTOP's system output volume to a percentage, 0–100 ('volume to
+        30', 'set the sound to 50%'). This is the Mac's overall sound, NOT the
+        Spotify app's own volume."""
+        def _do():
+            level = system.set_volume(max(0, min(100, percent)))
+            _log(f"set system volume to {level}%")
+            return f"system volume set to {level}%"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def change_system_volume(up: bool) -> str:
+        """Nudge the LAPTOP's system output volume up or down ('turn it up/down',
+        'louder'/'quieter' when they mean the whole computer, not just music)."""
+        def _do():
+            level = system.nudge_volume(up)
+            _log(f"turned system volume {'up' if up else 'down'}")
+            return f"system volume {'up' if up else 'down'} to {level}%"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def mute_system(muted: bool) -> str:
+        """Mute (muted=true) or unmute (muted=false) the LAPTOP's sound entirely."""
+        def _do():
+            system.set_muted(muted)
+            _log(f"{'muted' if muted else 'unmuted'} the system")
+            return "muted" if muted else "unmuted"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def set_dark_mode(on: bool) -> str:
+        """Turn the Mac's Dark Mode on (on=true) or off (on=false) — 'dark mode',
+        'light mode', 'switch to dark/light appearance'."""
+        def _do():
+            system.set_dark_mode(on)
+            _log(f"set dark mode {'on' if on else 'off'}")
+            return f"dark mode {'on' if on else 'off'}"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    return [set_brightness, change_brightness, set_system_volume,
+            change_system_volume, mute_system, set_dark_mode]
+
+
+# ── Reading mode (an ergonomic reading environment) ───────────────────────
+def build_reading_tools(*, reading: ReadingMode, memory=None) -> list:
+    @function_tool
+    async def start_reading_mode(music: str = "") -> str:
+        """Turn on READING MODE: a comfortable reading setup — warm tone + dark,
+        low-glare background + softer brightness, with soft instrumental music on
+        Spotify in the background. Use for 'reading mode', 'set up for reading',
+        'I'm going to read'. Pass `music` only if the user asks for specific
+        background music; otherwise leave it empty for the default calm mix."""
+        def _do():
+            msg = reading.start(music)
+            if memory is not None:
+                memory.log_activity("started reading mode")
+            return msg
+        return await asyncio.to_thread(_do)
+
+    @function_tool
+    async def stop_reading_mode() -> str:
+        """Turn OFF reading mode and restore the previous brightness, volume,
+        appearance and Night Shift. Use for 'stop reading mode', 'exit reading
+        mode', 'I'm done reading'."""
+        def _do():
+            msg = reading.stop()
+            if memory is not None:
+                memory.log_activity("stopped reading mode")
+            return msg
+        return await asyncio.to_thread(_do)
+
+    return [start_reading_mode, stop_reading_mode]

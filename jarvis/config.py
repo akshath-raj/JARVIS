@@ -171,6 +171,21 @@ class Config:
     # to the built-in defaults). Apps are only quit if the user lists them here.
     focus_block_sites: str = os.getenv("JARVIS_FOCUS_BLOCK_SITES", "")
     focus_block_apps: str = os.getenv("JARVIS_FOCUS_BLOCK_APPS", "")
+
+    # ── Reading mode ────────────────────────────────────────────────────
+    # "reading mode" sets a comfortable reading environment: warm tone (Night
+    # Shift), a dark low-glare background, softer brightness, and soft background
+    # music. Everything is saved and restored when reading mode ends.
+    reading_brightness: float = float(os.getenv("JARVIS_READING_BRIGHTNESS", "0.45"))  # 0.0–1.0
+    reading_volume: int = int(os.getenv("JARVIS_READING_VOLUME", "25"))  # system volume 0–100
+    reading_music_query: str = os.getenv(
+        "JARVIS_READING_MUSIC", "peaceful piano instrumental for reading"
+    )
+    reading_dark_mode: bool = _truthy(os.getenv("JARVIS_READING_DARK_MODE", "1"))
+    reading_night_shift: bool = _truthy(os.getenv("JARVIS_READING_NIGHT_SHIFT", "1"))
+    # Optional: a POSIX path to a calm wallpaper to switch to in reading mode.
+    reading_wallpaper: str = os.path.expanduser(os.getenv("JARVIS_READING_WALLPAPER", ""))
+
     # Local embedding model (kept for optional future use; memory no longer indexes).
     embed_model: str = os.getenv("JARVIS_EMBED_MODEL", "nomic-embed-text")
     embed_dims: int = int(os.getenv("JARVIS_EMBED_DIMS", "768"))  # nomic-embed-text = 768

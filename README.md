@@ -74,6 +74,27 @@ your home folder**. *"organise my downloads"*, *"move X to Y"*, *"open my recent
 *"remind me to submit at 9pm"*, *"remind me in an hour"*, *"add milk to my list"*. A
 due reminder **rings an alarm**, pops up on the HUD, and speaks; *"stop the alarm"* / *"I'm done with X"*.
 
+### 💡 Screen & sound controls
+JARVIS drives your Mac's own **display brightness**, **system volume**, and
+**appearance** — separate from a song's or a video's volume. A plain *"turn the
+volume down"* controls the **whole computer**; say *"turn the music down"* for Spotify.
+- *"set the brightness to 40%"*, *"dim the screen"*, *"brighter"*
+- *"turn the volume down"*, *"set the sound to 30%"*, *"mute"* / *"unmute"*
+- *"switch to dark mode"* / *"light mode"*
+
+> Precise brightness needs the `brightness` CLI (`brew install brightness`);
+> without it JARVIS steps the brightness keys (needs **Accessibility** permission).
+
+### 📖 Reading mode
+*"reading mode"* / *"set me up to read"* turns your Mac into a comfortable reading
+space — and *"stop reading mode"* / *"I'm done reading"* puts everything back:
+- **Warm tone** (Night Shift), a **dark, low-glare background** (Dark Mode),
+- **softer brightness** tuned for reading, and **soft instrumental music** on
+  Spotify in the background at a low volume.
+
+All settings it changes are **saved first and restored on exit**. Tune the defaults
+with `JARVIS_READING_*`. For the warm tone, install `nightlight` (`brew install nightlight`).
+
 ### 🎯 Focus assist mode
 *"focus mode"*, *"start a pomodoro"* → **closes every open distraction** (Instagram,
 YouTube, Netflix, TikTok, Reddit, X…), starts a timer, and **keeps closing anything
@@ -314,6 +335,9 @@ every option with inline notes). The essentials:
 | `JARVIS_FILES` / `JARVIS_FILES_SANDBOX` | `1` / `~` | file organiser + sandbox root |
 | `JARVIS_SCHEDULER` | `1` | calendar / to-dos / reminders / alarms |
 | `JARVIS_FOCUS` / `JARVIS_FOCUS_TECHNIQUE` | `1` / `pomodoro` | focus mode + default technique |
+| `JARVIS_READING_BRIGHTNESS` / `JARVIS_READING_VOLUME` | `0.45` / `25` | reading-mode screen brightness (0–1) + system volume (0–100) |
+| `JARVIS_READING_MUSIC` | `peaceful piano instrumental for reading` | Spotify query for reading-mode background music |
+| `JARVIS_READING_DARK_MODE` / `JARVIS_READING_NIGHT_SHIFT` | `1` / `1` | dark background + warm tone in reading mode |
 | `JARVIS_BROWSER_AGENT` | `1` | logged-in browser workflows |
 
 ---

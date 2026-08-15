@@ -33,14 +33,18 @@ from jarvis.openai_agent.tools import (
     build_focus_tools,
     build_music_tools,
     build_planner_tools,
+    build_reading_tools,
     build_screen_tools,
+    build_system_tools,
     build_triage_tools,
     build_ui_tools,
 )
 from jarvis.tools.browser import BrowserController
 from jarvis.tools.media import MediaController
+from jarvis.tools.reading_mode import ReadingMode
 from jarvis.tools.screen import ScreenController
 from jarvis.tools.spotify import SpotifyController
+from jarvis.tools.system_settings import SystemSettings
 from jarvis.tools.web import TavilyClient
 
 logger = logging.getLogger("jarvis.openai_agent")
@@ -69,13 +73,26 @@ _GUIDE = (
     "resumed, skipped, changed the volume, added a reminder, moved a file, etc. "
     "unless you actually CALLED that tool — never say you did something you didn't "
     "call. Answer general-knowledge/historical facts yourself with no tool. "
-    "Music (Spotify): pause_music, resume_music, next_song, play_song, "
-    "set_music_volume (exact number) or change_volume (up/down), set_loop, the "
-    "playlist/top/liked/recently-played tools. open_site opens a website or app by "
+    "Music (Spotify): pause_music, resume_music, next_song, play_song, set_loop, the "
+    "playlist/top/liked/recently-played tools. set_music_volume / change_volume adjust "
+    "ONLY the Spotify SONG's volume, and ONLY when the user explicitly says the music/"
+    "song/track/Spotify (e.g. 'turn the music up', 'make the song quieter', 'lower "
+    "Spotify'). open_site opens a website or app by "
     "name. play_youtube ONLY when the user says PLAY or WATCH one specific video; if "
     "they ask to LIST / FIND / RECOMMEND / 'good videos on X' or 'best … videos', use "
     "web_search and just TELL them the list — do NOT play anything. control_video "
     "controls a video already playing (subtitles/speed/volume/brightness/pause/seek). "
+    "The LAPTOP'S OWN screen & sound (the DEFAULT for volume/brightness): "
+    "set_system_volume/change_system_volume/mute_system control the WHOLE COMPUTER'S "
+    "output volume, and set_brightness/change_brightness control the MAC DISPLAY "
+    "brightness ('dim the screen', 'brightness to 40%'). IMPORTANT: a plain volume "
+    "request — 'turn the volume up/down', 'louder', 'quieter', 'volume to 30', 'mute' "
+    "— means the COMPUTER'S volume, so use the system tools; use the Spotify "
+    "set_music_volume/change_volume ONLY when the user explicitly names the music/song/"
+    "Spotify. set_dark_mode toggles Dark Mode. start_reading_mode when the user wants "
+    "to READ / 'reading mode' / 'set me up to read' — it warms the tone, darkens & dims "
+    "the screen for low glare, and starts soft background music; stop_reading_mode / "
+    "'I'm done reading' restores everything. "
     "Use explain_screen / explain_this ONLY when the user CLEARLY refers to their own "
     "screen or a document they are viewing ('what's on my screen', 'explain this slide/"
     "error/formula', 'read this'); if the request is vague or you're unsure they mean "
@@ -167,7 +184,7 @@ def _build_screen() -> ScreenController:
 def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
                 media=None, screen=None, announce=None, workspace=None,
                 ui=None, open_cb=None, scheduler=None, rag=None, organizer=None,
-                focus=None, agent_model=None):
+                focus=None, system=None, reading=None, agent_model=None):
     """Return (triage_agent, memory). Dependencies are injectable for tests.
 
     `ui` (a UIController) enables the HUD dashboard tools; `open_cb` is called to
@@ -187,6 +204,13 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
     if workspace is None:
         from jarvis.documents.workspace import Workspace
         workspace = Workspace(downloads_dir=config.browser_downloads)
+    system = system or SystemSettings()
+    reading = reading or ReadingMode(
+        system=system, spotify=spotify, search_mode=config.spotify_search_mode,
+        brightness=config.reading_brightness, volume=config.reading_volume,
+        music_query=config.reading_music_query, dark_mode=config.reading_dark_mode,
+        night_shift=config.reading_night_shift, wallpaper=config.reading_wallpaper,
+    )
 
     model = agent_model or _resolve_model()  # agent_model lets tests/benchmarks override
     settings = ModelSettings(temperature=0.2)
@@ -207,6 +231,8 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
         focus=focus,
     )
     tools += build_screen_tools(screen=screen, memory=memory, ui=ui, rag=rag)
+    tools += build_system_tools(system=system, memory=memory)
+    tools += build_reading_tools(reading=reading, memory=memory)
     tools += build_triage_tools(tavily=tavily, memory=memory)
     if ui is not None:
         tools += build_ui_tools(ui=ui, open_cb=open_cb)
