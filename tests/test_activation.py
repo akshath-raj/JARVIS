@@ -1,4 +1,4 @@
-"""Tests for the wake-word + smart-follow-up activation state machine."""
+"""Tests for the wake-word activation gate (wake word required on every turn)."""
 from __future__ import annotations
 
 import asyncio
@@ -19,7 +19,7 @@ class _Item:
 
 
 def _c():
-    return WakeController(enabled=True, words=("jarvis",), require_hey=True, followup_seconds=20)
+    return WakeController(enabled=True, words=("jarvis",), require_hey=True)
 
 
 def test_asleep_requires_wake_word():
@@ -71,61 +71,26 @@ def test_short_wake_word_can_be_opted_into():
     assert w.gate("jarvis, play some jazz") == (True, "play some jazz")
 
 
-def test_question_opens_followup_window():
+def test_wake_word_required_every_turn_no_followup():
+    # There is NO follow-up window: even right after JARVIS asks a clarifying
+    # question, the user's next turn STILL needs the wake word. A reply to the
+    # question without "jarvis" is treated as ambient and ignored.
     w = _c()
-    w.note_reply("Which playlist did you mean?")
-    assert w.awake is True
-    assert w.gate("my focus playlist") == (True, None)  # no wake word needed
+    assert w.gate("my focus playlist") == (False, None)          # no wake word → ignored
+    assert w.gate("hey jarvis my focus playlist") == (True, "my focus playlist")
 
 
-def test_answer_returns_to_sleep_by_default():
-    # Default (continuation off): a normal answer sends JARVIS back to sleep, so it
-    # won't act on ambient audio (e.g. the music it just started) without the wake
-    # word. This is the safe default.
+def test_no_awake_state_after_any_reply():
+    # The controller keeps no "awake" state at all — a bare command never goes
+    # through, no matter what JARVIS said previously.
     w = _c()
-    w.note_reply("Now playing your Focus playlist.")
-    assert w.awake is False
     assert w.gate("play more") == (False, None)
-
-
-def test_continuation_window_is_opt_in():
-    # With continuation explicitly enabled (headphones/echo-cancelled setups), a
-    # normal answer keeps JARVIS briefly awake so chained commands work.
-    w = WakeController(enabled=True, words=("jarvis",), require_hey=True, continuation_seconds=8)
-    w.note_reply("Now playing your Focus playlist.")
-    assert w.awake is True
-    assert w.gate("play something calming") == (True, None)
-
-
-def test_filler_ignored_even_when_awake():
-    w = _c()
-    w.note_reply("Anything else?")
-    assert w.gate("uh") == (False, None)
+    assert w.gate("play something calming") == (False, None)
 
 
 def test_disabled_lets_everything_through():
     w = WakeController(enabled=False)
     assert w.gate("random noise") == (True, None)
-
-
-# ── strict mode (the default): only the wake word ever activates ───────────────
-def test_strict_ignores_followup_window():
-    # A clarifying question would normally open a no-wake-word window; in strict mode
-    # the next turn STILL needs the wake word, so JARVIS can't be triggered by the
-    # user talking to someone else right after it asked something.
-    w = WakeController(enabled=True, words=("jarvis",), require_hey=True, strict=True)
-    w.note_reply("Which playlist did you mean?")
-    assert w.gate("my focus playlist") == (False, None)          # ambient, ignored
-    assert w.gate("hey jarvis my focus playlist") == (True, "my focus playlist")
-
-
-def test_strict_ignores_continuation_window():
-    w = WakeController(
-        enabled=True, words=("jarvis",), require_hey=True,
-        continuation_seconds=8, strict=True,
-    )
-    w.note_reply("Now playing your Focus playlist.")
-    assert w.gate("play something calming") == (False, None)     # not woken again
 
 
 def test_is_repeat_drops_immediate_duplicate():
@@ -141,16 +106,6 @@ def test_is_repeat_allows_deliberate_repeat_after_window():
     w._last_cmd_at -= 10  # simulate the dedup window having elapsed
     # a deliberate repeat after the window is NOT a duplicate — act on it again
     assert w.is_repeat("next song") is False
-
-
-def test_reset_sends_back_to_sleep():
-    w = _c()
-    w.note_reply("Which one?")           # opens follow-up window
-    assert w.awake is True
-    w.reset()
-    assert w.awake is False
-    # after reset the wake word is required again
-    assert w.gate("play some jazz") == (False, None)
 
 
 # ── conversation recency bounding (the "random music" fix) ────────────────────
@@ -216,7 +171,7 @@ def test_ungated_turn_is_blanked_so_it_cannot_leak():
     # An ambient turn (no wake word) must be STOPPED *and* emptied — otherwise it
     # lingers in the ChatContext and gets replayed to the brain on the next woken
     # turn, making JARVIS act on things nobody addressed to it.
-    ctl = WakeController(enabled=True, words=("jarvis",), require_hey=False, strict=True)
+    ctl = WakeController(enabled=True, words=("jarvis",), require_hey=False)
     msg = _Msg("play some music")
     with pytest.raises(StopResponse):
         asyncio.run(BaseJarvisAgent.on_user_turn_completed(_fake_agent(ctl), None, msg))
@@ -224,7 +179,7 @@ def test_ungated_turn_is_blanked_so_it_cannot_leak():
 
 
 def test_woken_turn_is_rewritten_without_wake_word():
-    ctl = WakeController(enabled=True, words=("jarvis",), require_hey=False, strict=True)
+    ctl = WakeController(enabled=True, words=("jarvis",), require_hey=False)
     msg = _Msg("jarvis play some jazz")
     asyncio.run(BaseJarvisAgent.on_user_turn_completed(_fake_agent(ctl), None, msg))
     assert msg.text_content == "play some jazz"   # woken, wake word stripped

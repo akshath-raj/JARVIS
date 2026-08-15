@@ -1,25 +1,19 @@
-"""Wake-word activation with smart follow-up.
+"""Wake-word activation.
 
-Rules:
-  * ASLEEP by default — a turn is only answered after a *direct* wake phrase at
-    the start of the turn (normally ``hey jarvis``).  A name mentioned in a song,
-    video, conversation, or later in a sentence is never a wake event.
-  * If JARVIS's reply is a CLARIFICATION QUESTION, a longer follow-up window opens
-    and the user's next turn is answered WITHOUT the wake word.
-  * If JARVIS's reply is an ANSWER (not a question), a shorter CONTINUATION window
-    opens so back-to-back commands work — e.g. "play some music" then, right
-    after, "play something calming" — without repeating the wake word. Once the
-    window lapses it goes back to sleep and the wake word is required again.
+The wake word is required on EVERY turn — there is no follow-up or continuation
+window. A turn is answered only if the wake word appears in the transcript; a name
+mentioned in a song, video, or a conversation with someone else is never a command,
+and JARVIS never stays "awake" after replying. This is deliberate: on an always-on
+mic, any window that answers without the wake word lets ambient/other-people speech
+(or JARVIS's own reply echoing back) trigger it.
 
-Transcript-based (not acoustic) so both "jarvis" and "hey jarvis" work, and so it
-composes with the smart follow-up state.
+Transcript-based (not acoustic) so both "jarvis" and "hey jarvis" work.
 """
 from __future__ import annotations
 
 import re
 import time
 
-_FILLER = {"", "uh", "um", "hmm", "mm", "mhm", "hm", ".", "you", "the"}
 # Internal transcript emitted by the local speaker gate. It is deliberately not
 # a natural-language command, so it can never reach an LLM or any device tool.
 VOICE_NOT_RECOGNIZED = "__JARVIS_VOICE_NOT_RECOGNIZED__"
@@ -55,21 +49,9 @@ class WakeController:
         enabled: bool = True,
         words: tuple[str, ...] = ("jarvis",),
         require_hey: bool = True,
-        followup_seconds: float = 20.0,
-        continuation_seconds: float = 0.0,
-        strict: bool = False,
     ):
         self.enabled = enabled
         self.require_hey = require_hey
-        self.followup_seconds = followup_seconds
-        self.continuation_seconds = continuation_seconds
-        # Strict mode: EVERY turn must start with the wake word — the follow-up /
-        # continuation windows are ignored, so JARVIS never treats ambient speech
-        # (you talking to someone else, background chatter) as a command. This is the
-        # safe default for an always-on mic; the cost is that answering a rare
-        # clarifying question also needs the wake word ("hey jarvis, the blue one").
-        self.strict = strict
-        self._awake_until = 0.0
         self._last_cmd = ""
         self._last_cmd_at = 0.0
         alt = "|".join(re.escape(w) for w in words)
@@ -87,16 +69,6 @@ class WakeController:
         # accept a lone "jarvis".
         hey = r"\bhey\b[\s,.:;!-]*" if require_hey else r"(?:\bhey\b[\s,.:;!-]*)?"
         self._wake_re = re.compile(rf"{hey}\b(?:{alt})\b[\s,.:;!?-]*", re.I)
-
-    @property
-    def awake(self) -> bool:
-        return time.time() < self._awake_until
-
-    def reset(self) -> None:
-        """Force back to sleep — the wake word is required again. Called when a long
-        silence starts a fresh conversation, so a lapsed follow-up window can't be
-        ridden by an unrelated later utterance."""
-        self._awake_until = 0.0
 
     def _detect(self, text: str) -> tuple[bool, str]:
         # Search the whole transcript for the wake word; the command is whatever
@@ -117,15 +89,8 @@ class WakeController:
         if not self.enabled:
             return True, None
 
-        # In non-strict mode a recent question/answer opens a brief window where the
-        # next turn is answered WITHOUT the wake word. In strict mode (default) this
-        # window is ignored entirely, so only the wake word ever activates JARVIS.
-        if not self.strict and self.awake:
-            if text.lower() in _FILLER:
-                return False, None
-            return True, None
-
-        # asleep -> require the wake word
+        # The wake word is ALWAYS required — there is no awake window. If it isn't in
+        # the transcript, this turn is not for JARVIS.
         detected, remainder = self._detect(text)
         if not detected:
             return False, None
@@ -146,14 +111,3 @@ class WakeController:
         self._last_cmd = norm
         self._last_cmd_at = now
         return False
-
-    def note_reply(self, text: str) -> None:
-        """Called after JARVIS replies. A question opens the longer follow-up
-        window; any other reply opens the shorter continuation window so the user
-        can chain commands (e.g. change the music) without repeating the wake word."""
-        if (text or "").strip().endswith("?"):
-            self._awake_until = time.time() + self.followup_seconds
-        elif self.continuation_seconds > 0:
-            self._awake_until = time.time() + self.continuation_seconds
-        else:
-            self._awake_until = 0.0

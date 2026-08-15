@@ -36,9 +36,6 @@ def _wake() -> WakeController:
         enabled=config.wake_enabled,
         words=config.wake_words,
         require_hey=config.wake_require_hey,
-        followup_seconds=config.wake_followup_seconds,
-        continuation_seconds=config.wake_continuation_seconds,
-        strict=config.wake_strict,
     )
 
 
@@ -87,8 +84,6 @@ async def _entrypoint_langgraph(ctx: JobContext) -> None:
             # Feed the transient learning log; the memory store distills it into
             # the durable profile in the background every N entries (see memory.py).
             memory.log_turn(text)
-        if role == "assistant":
-            userdata.activation.note_reply(text)
 
     announcer.session = session  # now background browser tasks can speak
     await session.start(agent=GraphAgent(), room=ctx.room)
@@ -227,8 +222,6 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
         text = getattr(item, "text_content", "") or ""
         if role == "user" and text:
             memory.log_turn(text)  # distilled into the durable profile in the background
-        if role == "assistant":
-            userdata.activation.note_reply(text)
         if role in ("user", "assistant") and text:
             if convlog is not None:
                 convlog.add(role, text)  # persistent transcript for the HUD
@@ -319,12 +312,6 @@ async def _entrypoint_native(ctx: JobContext) -> None:
         min_endpointing_delay=config.endpoint_delay,
         max_endpointing_delay=config.endpoint_max_delay,
     )
-
-    @session.on("conversation_item_added")
-    def _on_item(ev) -> None:
-        item = getattr(ev, "item", None)
-        if item is not None and getattr(item, "role", None) == "assistant":
-            userdata.activation.note_reply(getattr(item, "text_content", "") or "")
 
     await session.start(agent=JarvisAgent(), room=ctx.room)
 

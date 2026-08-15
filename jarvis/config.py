@@ -100,10 +100,10 @@ class Config:
     endpoint_delay: float = float(os.getenv("JARVIS_ENDPOINT_DELAY", "0.4"))
     endpoint_max_delay: float = float(os.getenv("JARVIS_ENDPOINT_MAX_DELAY", "6.0"))
 
-    # ── Activation (wake word + smart follow-up) ───────────────────────
-    # Say "jarvis" or "hey jarvis" to activate. After JARVIS asks a clarifying
-    # question, the next turn is answered WITHOUT the wake word for a short window;
-    # after a normal answer it goes back to sleep.
+    # ── Activation (wake word) ─────────────────────────────────────────
+    # Say "jarvis" (or "hey jarvis") to activate. The wake word is required on
+    # EVERY turn — there is no follow-up/continuation window, so JARVIS never keeps
+    # listening after it replies and never acts on ambient/other-people speech.
     wake_enabled: bool = _truthy(os.getenv("JARVIS_WAKE", "1"))
     # Include common Whisper mishearings of "jarvis" (jairus/jarvus/jervis/javis) so
     # the wake gate still fires when the STT slightly mistranscribes the name.
@@ -118,19 +118,6 @@ class Config:
     # optional). Set JARVIS_WAKE_REQUIRE_HEY=1 to require the full "hey jarvis" phrase
     # instead — that cuts false wakes from ambient speech / Whisper mishearings.
     wake_require_hey: bool = _truthy(os.getenv("JARVIS_WAKE_REQUIRE_HEY", "0"))
-    # Strict mode (default ON): EVERY turn must contain the wake word — the follow-up
-    # / continuation windows below are ignored, so JARVIS never treats ambient speech
-    # (you talking to someone else, background chatter) as a command. Set 0 to allow
-    # answering a clarifying question / chaining commands without the wake word (only
-    # sensible with headphones or good echo cancellation).
-    wake_strict: bool = _truthy(os.getenv("JARVIS_WAKE_STRICT", "1"))
-    wake_followup_seconds: float = float(os.getenv("JARVIS_WAKE_FOLLOWUP", "5"))
-    # After a normal (non-question) answer, optionally stay awake briefly so
-    # back-to-back commands work without repeating the wake word. OFF by default:
-    # when music/video plays through SPEAKERS the mic transcribes it as fake user
-    # turns while awake, which makes JARVIS re-run tools in a loop. Safe to enable
-    # (e.g. 8) only with headphones/good echo cancellation.
-    wake_continuation_seconds: float = float(os.getenv("JARVIS_WAKE_CONTINUATION", "0"))
     # A silence longer than this starts a FRESH conversation: the brain is given only
     # the turns since that gap, so a command can't be answered in the context of a
     # minutes-old, unrelated conversation — nor act on stale/echo transcripts that
