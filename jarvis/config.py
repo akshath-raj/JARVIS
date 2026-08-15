@@ -93,10 +93,11 @@ class Config:
         ).split(",")
         if w.strip()
     )
-    # Strict mode (default): require the explicit phrase "hey jarvis". Set 0 if
-    # you deliberately prefer the shorter "jarvis" prefix and have headphones or
-    # robust echo cancellation.
-    wake_require_hey: bool = _truthy(os.getenv("JARVIS_WAKE_REQUIRE_HEY", "1"))
+    # Wake phrase: the bare word "jarvis" activates by default (a leading "hey" is
+    # optional). Set JARVIS_WAKE_REQUIRE_HEY=1 to require the full "hey jarvis" phrase
+    # instead — that cuts false wakes from ambient speech / Whisper mishearings, but
+    # the strongest fix for those is owner-voice verification (JARVIS_VOICE_VERIFY).
+    wake_require_hey: bool = _truthy(os.getenv("JARVIS_WAKE_REQUIRE_HEY", "0"))
     # Strict activation (default ON): EVERY turn must begin with the wake word, so
     # JARVIS never rides a "stay-awake" window into acting on ambient speech (you
     # talking to someone else, background chatter). Set JARVIS_WAKE_STRICT=0 to
