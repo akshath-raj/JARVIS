@@ -174,23 +174,35 @@ def _mcp_args() -> list[str]:
     return args
 
 
-def _ensure_openai_key() -> bool:
-    """The Agents SDK default client reads OPENAI_API_KEY; make sure it's set."""
+def _resolve_driver():
+    """The model that reasons over the page and drives the browser. Prefer an OpenAI
+    frontier model (best at browsing) when a key is present; otherwise fall back to
+    Cerebras gpt-oss-120b (OpenAI-compatible) so the agent works on a Cerebras-only
+    setup. Returns (model, error_message) — model is None when no key is available."""
     key = config.openai_api_key or os.getenv("OPENAI_API_KEY", "")
     if key:
-        os.environ["OPENAI_API_KEY"] = key
-        return True
-    return False
+        os.environ["OPENAI_API_KEY"] = key  # the Agents SDK default client reads this
+        return config.pw_model, ""
+    if getattr(config, "agent_provider", "") == "cerebras" and config.cerebras_api_key:
+        from agents import OpenAIChatCompletionsModel, set_tracing_disabled
+        from openai import AsyncOpenAI
+
+        set_tracing_disabled(True)
+        client = AsyncOpenAI(base_url=config.cerebras_base_url, api_key=config.cerebras_api_key)
+        logger.info("web agent driver on Cerebras %s", config.cerebras_model)
+        return OpenAIChatCompletionsModel(model=config.cerebras_model, openai_client=client), ""
+    return None, "I need an OpenAI or Cerebras key for the web agent, sir"
 
 
 async def run_web_task(task: str) -> str:
     """Drive the browser to accomplish `task`; return a spoken-friendly result."""
     if not config.pw_agent_enabled:
         return "the web agent is turned off, sir"
-    if not _ensure_openai_key():
-        return "I need an OpenAI key for the web agent, sir — set OPENAI_API_KEY"
     if shutil.which("npx") is None:
         return "I need Node.js for the web agent, sir — install it with brew install node"
+    model, key_err = _resolve_driver()
+    if model is None:
+        return key_err
 
     from agents import Agent, ModelSettings, Runner, set_tracing_disabled
     from agents.mcp import MCPServerStdio
@@ -214,7 +226,7 @@ async def run_web_task(task: str) -> str:
                 agent = Agent(
                     name="WebNavigator",
                     instructions=instructions,
-                    model=config.pw_model,
+                    model=model,
                     mcp_servers=[server],
                     model_settings=ModelSettings(temperature=0.0, tool_choice="auto"),
                 )
