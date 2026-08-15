@@ -73,14 +73,20 @@ class WakeController:
         self._last_cmd = ""
         self._last_cmd_at = 0.0
         alt = "|".join(re.escape(w) for w in words)
-        # Activate whenever the wake word appears ANYWHERE in the transcript, and treat
+        # Activate when the wake word appears ANYWHERE in the transcript, and treat
         # only what FOLLOWS it as the command — "so, jarvis play some jazz" wakes and
-        # runs "play some jazz". A leading "hey" is optional. This is deliberately more
-        # permissive than a strict prefix: STT frequently drops or mangles the opening
-        # word, so requiring the wake phrase to start the turn made JARVIS miss real
-        # commands. The wake word itself is still a hard \b-bounded token, so it won't
-        # fire on substrings, and everything before it is discarded.
-        self._wake_re = re.compile(rf"(?:\bhey\b[\s,.:;!-]*)?\b(?:{alt})\b[\s,.:;!?-]*", re.I)
+        # runs "play some jazz". Searching anywhere (not just the start) is deliberate:
+        # STT frequently drops/mangles the opening word. The wake word is a hard
+        # \b-bounded token, so it won't fire on substrings, and everything before it is
+        # discarded.
+        #
+        # require_hey (default) makes the leading "hey" MANDATORY — the two-word phrase
+        # "hey jarvis" is far less likely to appear in ambient speech (you talking to
+        # someone else) or in a Whisper mishearing than a bare "jarvis", which is the
+        # main source of false wakes. Turn it off (JARVIS_WAKE_REQUIRE_HEY=0) to also
+        # accept a lone "jarvis".
+        hey = r"\bhey\b[\s,.:;!-]*" if require_hey else r"(?:\bhey\b[\s,.:;!-]*)?"
+        self._wake_re = re.compile(rf"{hey}\b(?:{alt})\b[\s,.:;!?-]*", re.I)
 
     @property
     def awake(self) -> bool:

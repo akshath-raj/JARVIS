@@ -33,16 +33,25 @@ def test_direct_name_only_wakes_without_rewrite():
     assert w.gate("hey jarvis") == (True, None)
 
 
-def test_wake_word_anywhere_activates_and_answers_after_it():
-    # The wake word need not start the turn: anywhere in the transcript triggers, and
-    # only what FOLLOWS it is taken as the command (the lead-in is dropped).
+def test_wake_phrase_anywhere_activates_and_answers_after_it():
+    # The wake phrase need not start the turn: "hey jarvis" anywhere in the transcript
+    # triggers, and only what FOLLOWS it is taken as the command (the lead-in dropped).
     w = _c()
-    assert w.gate("jarvis, play some jazz") == (True, "play some jazz")
-    assert w.gate("so um, jarvis what is the time") == (True, "what is the time")
     assert w.gate("okay hey jarvis play some jazz") == (True, "play some jazz")
-    # with no wake word at all, nothing is answered
+    assert w.gate("so um, hey jarvis what is the time") == (True, "what is the time")
+    # with no wake phrase at all, nothing is answered
     assert w.gate("play some jazz") == (False, None)
     assert w.gate("what is the time") == (False, None)
+
+
+def test_require_hey_ignores_bare_wake_word():
+    # With require_hey (default), a bare "jarvis" — the main source of false wakes from
+    # ambient speech or Whisper mishearings — must NOT activate; only "hey jarvis" does.
+    w = _c()
+    assert w.gate("jarvis, play some jazz") == (False, None)
+    assert w.gate("so um, jarvis what is the time") == (False, None)
+    assert w.gate("yeah I told jarvis about it earlier") == (False, None)
+    assert w.gate("hey jarvis play some jazz") == (True, "play some jazz")
 
 
 def test_wake_word_is_boundary_bounded_not_substring():
