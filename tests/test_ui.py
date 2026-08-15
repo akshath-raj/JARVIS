@@ -20,8 +20,54 @@ def test_conversation_log_groups_into_sessions(tmp_path):
 
 # ── UIController ────────────────────────────────────────────────────────────
 class _Mem:
+    def __init__(self):
+        self.remembered = []
+
     def all(self):
         return ["loves drum and bass", "prefers a British voice"]
+
+    def remember(self, text, source="explicit"):
+        self.remembered.append(text)
+        return "ok"
+
+
+# ── first-launch name prompt ────────────────────────────────────────────────
+def test_needs_name_when_no_user_set(tmp_path):
+    ui = UIController(user="", suggestion="Alex")
+    st = ui.state(0)
+    assert st["needs_name"] is True        # first launch → HUD should ask
+    assert st["name_suggestion"] == "Alex"
+    assert st["user"] == ""
+
+
+def test_known_user_does_not_prompt(tmp_path):
+    ui = UIController(user="Akshath")
+    assert ui.state(0)["needs_name"] is False
+
+
+def test_set_user_name_persists_updates_and_teaches_memory(tmp_path, monkeypatch):
+    import jarvis.identity as ident
+
+    monkeypatch.setattr(ident, "_PATH", tmp_path / "user.json")
+    mem = _Mem()
+    ui = UIController(user="", suggestion="Alex", memory=mem)
+    saved = ui.set_user_name("  Riya  Sharma ")
+    assert saved == "Riya Sharma"                      # trimmed/normalised
+    assert ident.load_name() == "Riya Sharma"          # persisted for next session
+    assert ui.state(0)["user"] == "Riya Sharma"
+    assert ui.state(0)["needs_name"] is False
+    assert "The user's name is Riya Sharma." in mem.remembered
+    # an "identity" event is emitted so open clients update live
+    assert any(e["type"] == "identity" for e in ui.state(0)["events"])
+
+
+def test_set_user_name_blank_is_ignored(tmp_path, monkeypatch):
+    import jarvis.identity as ident
+
+    monkeypatch.setattr(ident, "_PATH", tmp_path / "user.json")
+    ui = UIController(user="", suggestion="Alex")
+    assert ui.set_user_name("   ") == ""
+    assert ui.state(0)["needs_name"] is True            # still needs a name
 
 
 def _ctrl(tmp_path):

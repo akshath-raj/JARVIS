@@ -227,3 +227,20 @@ body{
 ::-webkit-scrollbar-track{background:transparent}
 
 @media (max-width:1000px){.layout{grid-template-columns:1fr}.col.left,.col.right{max-height:none}}
+
+/* ── first-launch name prompt (boot screen) ─────────────────────────────── */
+.name-prompt{display:none;flex-direction:column;align-items:center;gap:16px;margin-top:26px}
+.name-prompt.show{display:flex;animation:welcomeIn .7s ease both}
+.name-prompt label{font-size:13px;letter-spacing:.22em;color:#bfeeff;opacity:.9;text-shadow:var(--glow)}
+.name-row{display:flex;gap:10px;align-items:stretch}
+#name-input{
+  width:min(320px,60vw);padding:11px 15px;background:rgba(72,217,255,.05);
+  border:1px solid var(--cyan);border-radius:6px;color:#eaffff;font-family:var(--mono);
+  font-size:17px;letter-spacing:.08em;outline:none;box-shadow:0 0 14px rgba(72,217,255,.18) inset}
+#name-input::placeholder{color:var(--cyan-dim)}
+#name-input:focus{box-shadow:0 0 0 1px var(--cyan),0 0 22px rgba(72,217,255,.4) inset}
+#name-go{
+  padding:0 18px;background:var(--cyan-deep);border:1px solid var(--cyan);border-radius:6px;
+  color:#eaffff;font-family:var(--mono);font-size:14px;letter-spacing:.14em;cursor:pointer;
+  text-shadow:var(--glow);transition:background .15s,box-shadow .15s}
+#name-go:hover{background:rgba(72,217,255,.18);box-shadow:0 0 16px rgba(72,217,255,.45)}

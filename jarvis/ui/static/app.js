@@ -299,6 +299,11 @@ function applyEvent(ev) {
       if (booted) appendFeedEntry(ev.entry, true);
       else { revealPending = true; pendingFeed.push(ev.entry); }
       break;
+    case "identity":
+      if (lastState) { lastState.user = ev.user; lastState.needs_name = false; }
+      if (booted) renderProfile(lastState);
+      else { hideNamePrompt(); revealPending = true; maybeReveal(lastState); }
+      break;
     case "navigate": if (booted) navigate(ev); break;
     case "alarm": revealPending = true; maybeReveal(lastState); showAlarm(ev.alarm); break;
     case "alarm_cleared": hideAlarm(); break;
@@ -312,10 +317,47 @@ function applyEvent(ev) {
 let lastState = { user: "" };  // placeholder until the server sends the real name
 async function maybeReveal(state) {
   if (booted) return;
+  // First launch with no saved name: ask for it BEFORE the welcome animation, then
+  // persist it (server writes ~/.jarvis/user.json) for every session after.
+  if (state && state.needs_name) { showNamePrompt(state); return; }
   if (!(state && (state.revealed || revealPending))) return;
   await reveal(state.user);
   if (state) { syncFeed(state); renderFocus(state.focus); }
   while (pendingFeed.length) appendFeedEntry(pendingFeed.shift(), false);
+}
+
+// ── first-launch name prompt ─────────────────────────────────────────────────
+let namePromptShown = false;
+function showNamePrompt(state) {
+  const box = $("name-prompt");
+  if (!box || namePromptShown) return;
+  namePromptShown = true;
+  const input = $("name-input");
+  if (input && state && state.name_suggestion && !input.value) input.value = state.name_suggestion;
+  const w = $("welcome"); if (w) w.classList.remove("show");   // hide the greeting while asking
+  box.classList.add("show");
+  setTimeout(() => { if (input) { input.focus(); input.select(); } }, 60);
+}
+function hideNamePrompt() { const b = $("name-prompt"); if (b) b.classList.remove("show"); }
+async function submitName() {
+  const input = $("name-input");
+  const name = ((input && input.value) || "").trim();
+  if (!name) { if (input) input.focus(); return; }
+  let finalName = name;
+  try {
+    const r = await fetch("/api/user/name", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const data = await r.json();
+    if (data && data.user) finalName = data.user;
+  } catch (_) { /* offline: still greet locally with what they typed */ }
+  if (lastState) { lastState.user = finalName; lastState.needs_name = false; }
+  else lastState = { user: finalName, memories: [], conversations: [], feed: [] };
+  hideNamePrompt();
+  renderProfile(lastState);
+  revealPending = true;
+  await maybeReveal(lastState);   // now run the welcome animation with the entered name
 }
 
 function applySnapshot(state) {
@@ -354,3 +396,7 @@ function connect() {
 fetch("/api/state?since=0", { cache: "no-store" })
   .then((r) => r.json()).then(applySnapshot).catch(() => {});
 connect();
+
+// first-launch name form
+const _nameForm = $("name-prompt");
+if (_nameForm) _nameForm.addEventListener("submit", (e) => { e.preventDefault(); submitName(); });

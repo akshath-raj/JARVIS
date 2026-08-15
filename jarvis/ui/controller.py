@@ -14,8 +14,12 @@ from collections import deque
 
 
 class UIController:
-    def __init__(self, *, user: str, memory=None, conversations=None, tasks=None) -> None:
-        self._user = user
+    def __init__(self, *, user: str, suggestion: str = "", memory=None,
+                 conversations=None, tasks=None) -> None:
+        self._user = (user or "").strip()
+        # a suggested name (from the macOS account) pre-filled into the first-launch
+        # name prompt; only used while no name is set.
+        self._suggestion = (suggestion or "").strip()
         self._memory = memory
         self._conversations = conversations
         self._tasks = tasks  # TaskStore: to-dos, calendar events, reminders
@@ -153,6 +157,27 @@ class UIController:
         with self._lock:
             return self._revealed
 
+    # ── identity (first-launch name prompt) ─────────────────────────────────
+    def set_user_name(self, name: str) -> str:
+        """Save the name the user typed on first launch: persist it for future
+        sessions, use it in the HUD now, and teach it to the agent's memory so JARVIS
+        knows it everywhere. Returns the stored name ("" if blank)."""
+        from jarvis.identity import save_name
+
+        name = save_name(name)
+        if not name:
+            return ""
+        with self._lock:
+            self._user = name
+        # remember it so the brain can greet/refer to the user by name
+        if self._memory is not None:
+            try:
+                self._memory.remember(f"The user's name is {name}.", "explicit")
+            except Exception:
+                pass
+        self._emit({"type": "identity", "user": name})
+        return name
+
     # ── data + polling (called from the web server) ─────────────────────────
     def _about(self) -> list[str]:
         if self._memory is None:
@@ -200,6 +225,8 @@ class UIController:
         tasks = self._tasks_data()
         return {
             "user": self._user,
+            "needs_name": not self._user,          # first launch → HUD asks for a name
+            "name_suggestion": self._suggestion,   # pre-fill for that prompt
             "revealed": revealed,
             "cursor": cursor,
             "about": about,

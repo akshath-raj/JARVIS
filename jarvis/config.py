@@ -41,6 +41,13 @@ def _default_user_name() -> str:
         return "there"
 
 
+def _load_saved_name() -> str:
+    """The name saved on first HUD launch (~/.jarvis/user.json), or "" if unset."""
+    from jarvis.identity import load_name
+
+    return load_name()
+
+
 @dataclass(frozen=True)
 class Config:
     # ── Mode ───────────────────────────────────────────────────────────
@@ -154,7 +161,12 @@ class Config:
     # analysis) on screen. Served locally; nothing leaves the machine.
     ui_enabled: bool = _truthy(os.getenv("JARVIS_UI", "1"))
     ui_port: int = int(os.getenv("JARVIS_UI_PORT", "8137"))
-    ui_user: str = os.getenv("JARVIS_UI_USER") or _default_user_name()
+    # The name JARVIS greets you by. Precedence: explicit JARVIS_UI_USER > a name you
+    # saved on first launch (~/.jarvis/user.json) > "" — and "" makes the HUD ask for
+    # your name once, then persist it for every session after. `_default_user_name()`
+    # is only a SUGGESTION pre-filled into that prompt.
+    ui_user: str = os.getenv("JARVIS_UI_USER") or _load_saved_name() or ""
+    ui_user_suggestion: str = _default_user_name()
 
     # ── Document RAG (local embeddings + self-updating vector store) ───
     # JARVIS indexes your documents (PDF/DOCX/PPTX/TXT/MD) and answers questions

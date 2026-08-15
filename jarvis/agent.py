@@ -127,7 +127,10 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
             model=chat_model(config.extract_model, temperature=0.0),
             summarize_every=config.summarize_every,
         )
-        ui = UIController(user=config.ui_user, memory=shared_memory, conversations=convlog, tasks=tasks)
+        ui = UIController(
+            user=config.ui_user, suggestion=config.ui_user_suggestion,
+            memory=shared_memory, conversations=convlog, tasks=tasks,
+        )
         server = UIServer(ui, port=config.ui_port)
         server.start()
 

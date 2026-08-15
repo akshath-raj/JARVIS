@@ -87,6 +87,14 @@ class UIServer:
                 since = 0
             return JSONResponse(controller.state(since))
 
+        async def set_name(request: Request):
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            name = controller.set_user_name(str((data or {}).get("name", "")))
+            return JSONResponse({"ok": bool(name), "user": name})
+
         async def favicon(request: Request):
             from starlette.responses import Response
 
@@ -128,6 +136,7 @@ class UIServer:
         routes = [
             Route("/", index),
             Route("/api/state", state),
+            Route("/api/user/name", set_name, methods=["POST"]),
             Route("/favicon.ico", favicon),
             WebSocketRoute("/ws", ws_endpoint),
             Mount("/static", app=StaticFiles(directory=str(_STATIC)), name="static"),
