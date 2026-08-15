@@ -30,6 +30,8 @@ from livekit.agents.types import (
     APIConnectOptions,
     NotGivenOr,
 )
+from jarvis.activation import current_conversation
+from jarvis.config import config
 from jarvis.openai_agent.brain import BrainContext
 
 logger = logging.getLogger("jarvis.openai_agent.adapter")
@@ -39,9 +41,17 @@ def _chat_ctx_to_input(chat_ctx: ChatContext) -> list[dict]:
     """Convert the LiveKit chat context to Agents SDK input items.
 
     We forward the user/assistant turns (the agents carry their own system prompt
-    via `instructions`, so LiveKit-layer system messages are dropped)."""
+    via `instructions`, so LiveKit-layer system messages are dropped). Turns before
+    the most recent long silence are dropped: an always-listening mic accumulates
+    ignored/echo transcripts (e.g. JARVIS's own reply heard back) in the context, and
+    without this a woken command could be answered in the light of that stale
+    chatter. `conversation_gap_seconds` bounds the brain to the CURRENT conversation."""
+    src = chat_ctx.items
+    gap = config.conversation_gap_seconds
+    if gap > 0:
+        src = current_conversation(src, max_gap=gap)
     items: list[dict] = []
-    for it in chat_ctx.items:
+    for it in src:
         role = getattr(it, "role", None)
         if role not in ("user", "assistant"):
             continue

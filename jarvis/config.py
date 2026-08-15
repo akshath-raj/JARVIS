@@ -131,6 +131,12 @@ class Config:
     # turns while awake, which makes JARVIS re-run tools in a loop. Safe to enable
     # (e.g. 8) only with headphones/good echo cancellation.
     wake_continuation_seconds: float = float(os.getenv("JARVIS_WAKE_CONTINUATION", "0"))
+    # A silence longer than this starts a FRESH conversation: the brain is given only
+    # the turns since that gap, so a command can't be answered in the context of a
+    # minutes-old, unrelated conversation — nor act on stale/echo transcripts that
+    # piled up while JARVIS was asleep. Set 0 to replay the whole session (not
+    # recommended for an always-listening mic).
+    conversation_gap_seconds: float = float(os.getenv("JARVIS_CONVO_GAP", "45"))
 
     # ── Orchestrator / brain ───────────────────────────────────────────
     # "langgraph" (default): LangGraph react-agent brain + persistent memory.
