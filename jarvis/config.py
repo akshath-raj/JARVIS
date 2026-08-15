@@ -329,5 +329,27 @@ class Config:
     # the server repo root inferred from the build/index.js path.
     spotify_mcp_cwd: str = os.path.expanduser(os.getenv("JARVIS_SPOTIFY_MCP_CWD", ""))
 
+    # ── Safe web images (for Pages / documents) ────────────────────────
+    # JARVIS may fetch images from the web to drop into documents. To keep this
+    # safe it downloads ONLY from an allowlist of reputable, non-tracking image
+    # sources (Wikimedia Commons / Wikipedia by default — freely-licensed, no
+    # redirects to random sites), verifies the bytes really are a raster image,
+    # and caps the size. Add hosts only if you trust them.
+    image_download_dir: str = os.path.expanduser(
+        os.getenv("JARVIS_IMAGE_DIR", "~/.jarvis/images")
+    )
+    image_allowed_hosts: tuple[str, ...] = tuple(
+        h.strip().lower() for h in os.getenv(
+            "JARVIS_IMAGE_HOSTS",
+            "upload.wikimedia.org,commons.wikimedia.org,en.wikipedia.org",
+        ).split(",") if h.strip()
+    )
+    image_max_bytes: int = int(os.getenv("JARVIS_IMAGE_MAX_BYTES", str(15 * 1024 * 1024)))
+    image_search_max: int = int(os.getenv("JARVIS_IMAGE_SEARCH_MAX", "6"))
+    # Look at each candidate image with the vision model and have the reasoning model
+    # judge whether it fits what the user asked, trying another if not. Best-effort
+    # (fails open on any model error); needs a vision-capable model key.
+    image_vetting_enabled: bool = _truthy(os.getenv("JARVIS_IMAGE_VET", "1"))
+
 
 config = Config()

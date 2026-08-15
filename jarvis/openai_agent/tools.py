@@ -15,7 +15,10 @@ from agents import function_tool
 
 from jarvis.browser_agent.client import run_browser_task
 from jarvis.tools.browser import BrowserController, BrowserError
+from jarvis.tools.images import ImageError, SafeImageFetcher
 from jarvis.tools.media import MediaController, MediaError
+from jarvis.tools.pages import PagesController, PagesError
+from jarvis.tools.pages_author import AuthorError, PagesAuthor
 from jarvis.tools.reading_mode import ReadingMode
 from jarvis.tools.screen import ScreenController, ScreenError
 from jarvis.tools.spotify import SpotifyController, SpotifyError
@@ -1023,3 +1026,377 @@ def build_reading_tools(*, reading: ReadingMode, memory=None) -> list:
         return await asyncio.to_thread(_do)
 
     return [start_reading_mode, stop_reading_mode]
+
+
+# ── Pages (Apple's word processor) + clipboard ────────────────────────────
+def build_pages_tools(*, pages: PagesController, memory=None) -> list:
+    """Full control of the Pages app: create documents, insert/select/remove text,
+    headings & titles, tables and images — plus copy/paste and the clipboard."""
+
+    def _log(msg: str) -> None:
+        if memory is not None:
+            memory.log_activity(msg)
+
+    async def _run(fn, activity: str = "") -> str:
+        try:
+            res = await asyncio.to_thread(fn)
+            if activity:
+                _log(activity)
+            return res
+        except PagesError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def pages_new_document() -> str:
+        """Open the Pages app and create a NEW blank document. Use for 'open Pages',
+        'start a new Pages document', 'new document', 'make a new page'."""
+        return await _run(pages.new_document, "opened a new Pages document")
+
+    @function_tool
+    async def pages_add_title(text: str) -> str:
+        """Insert a large document TITLE at the cursor in Pages, then a new line. Use
+        for 'add a title', 'title it X', 'the heading at the top should be X'."""
+        return await _run(lambda: pages.add_title(text), f"added a Pages title: {text[:40]}")
+
+    @function_tool
+    async def pages_add_heading(text: str, level: int = 1) -> str:
+        """Insert a HEADING at the cursor in Pages (level 1 = bigger section heading,
+        level 2 = smaller sub-heading), then a new line. Use for 'add a heading X',
+        'put a section called X'."""
+        return await _run(lambda: pages.add_heading(text, level), f"added a Pages heading: {text[:40]}")
+
+    @function_tool
+    async def pages_insert_text(text: str) -> str:
+        """Insert body/paragraph TEXT at the cursor in the front Pages document,
+        keeping everything already there. Use for 'write X', 'add a paragraph
+        saying X', 'type X', 'insert this text'."""
+        return await _run(lambda: pages.insert_text(text), "inserted text in Pages")
+
+    @function_tool
+    async def pages_append_text(text: str) -> str:
+        """Append text to the END of the Pages document (after all existing content).
+        Use for 'add X at the end', 'append X'."""
+        return await _run(lambda: (pages.append_text(text), "appended the text")[1],
+                          "appended text in Pages")
+
+    @function_tool
+    async def pages_get_text() -> str:
+        """Read back ALL the text currently in the front Pages document. Use for
+        'what does the document say', 'read the page back to me'."""
+        return await _run(pages.get_text)
+
+    @function_tool
+    async def pages_replace_all(text: str) -> str:
+        """Replace the ENTIRE contents of the Pages document with new text (overwrite
+        everything). Use for 'replace everything with X', 'rewrite the document as X'."""
+        return await _run(lambda: (pages.set_text(text), "replaced the document text")[1],
+                          "replaced Pages document text")
+
+    @function_tool
+    async def pages_clear() -> str:
+        """Erase ALL the text in the front Pages document, leaving it blank. Use for
+        'clear the document', 'delete everything', 'wipe the page'."""
+        return await _run(pages.clear, "cleared the Pages document")
+
+    @function_tool
+    async def pages_save(name: str = "") -> str:
+        """Save the front Pages document. For a brand-new document pass a `name` (a
+        filename, saved to the user's Documents folder) so it saves without a dialog;
+        for an already-saved document leave `name` empty. Use for 'save the document',
+        'save it as deepfakes'."""
+        def _do():
+            path = ""
+            if name.strip():
+                from pathlib import Path
+                path = str(Path.home() / "Documents" / name.strip())
+            return pages.save(path)
+        return await _run(lambda: _do(), "saved a Pages document")
+
+    @function_tool
+    async def pages_insert_table() -> str:
+        """Insert a TABLE at the cursor in the Pages document. Use for 'add a table',
+        'insert a table here'."""
+        return await _run(pages.insert_table, "inserted a table in Pages")
+
+    @function_tool
+    async def pages_insert_image(path: str) -> str:
+        """Insert an IMAGE file (by its file path) at the cursor in the Pages
+        document. Use for 'add the image at ~/Pictures/x.png', 'insert this photo'."""
+        return await _run(lambda: pages.insert_image(path), "inserted an image in Pages")
+
+    @function_tool
+    async def pages_select_all() -> str:
+        """Select ALL content in the front Pages document (⌘A). Use before copying or
+        deleting everything."""
+        return await _run(pages.select_all)
+
+    @function_tool
+    async def pages_copy() -> str:
+        """Copy the current selection in Pages to the clipboard (⌘C)."""
+        return await _run(pages.copy_selection, "copied from Pages")
+
+    @function_tool
+    async def pages_cut() -> str:
+        """Cut the current selection in Pages to the clipboard (⌘X)."""
+        return await _run(pages.cut_selection, "cut from Pages")
+
+    @function_tool
+    async def pages_paste() -> str:
+        """Paste the clipboard into the Pages document at the cursor (⌘V)."""
+        return await _run(pages.paste, "pasted into Pages")
+
+    @function_tool
+    async def pages_delete_selection() -> str:
+        """Delete the currently selected content in Pages (does NOT copy it). Use for
+        'remove this', 'delete the selected part'."""
+        return await _run(pages.delete_selection, "deleted a selection in Pages")
+
+    @function_tool
+    async def copy_to_clipboard(text: str) -> str:
+        """Put text on the system clipboard so it can be pasted anywhere. Use for
+        'copy X', 'copy this to the clipboard'."""
+        def _do():
+            pages.set_clipboard(text)
+            return "copied to the clipboard"
+        return await _run(_do, "set the clipboard")
+
+    @function_tool
+    async def read_clipboard() -> str:
+        """Read the current text contents of the system clipboard. Use for 'what's on
+        my clipboard', 'what did I copy'."""
+        def _do():
+            txt = pages.get_clipboard()
+            return txt or "the clipboard is empty"
+        return await _run(_do)
+
+    return [
+        pages_new_document, pages_add_title, pages_add_heading, pages_insert_text,
+        pages_append_text, pages_get_text, pages_replace_all, pages_clear,
+        pages_save, pages_insert_table, pages_insert_image, pages_select_all, pages_copy,
+        pages_cut, pages_paste, pages_delete_selection,
+        copy_to_clipboard, read_clipboard,
+    ]
+
+
+# ── Safe web images (search + guardrailed download, optional Pages insert) ──
+def build_image_tools(*, images: SafeImageFetcher, pages: PagesController | None = None,
+                      vetter=None, memory=None) -> list:
+    """Fetch images from trusted web sources under strict safety guardrails, and
+    (if Pages is available) drop them straight into the document. When a `vetter` is
+    supplied, each candidate is looked at (vision) and judged for fit (reasoning), so
+    JARVIS keeps searching until an image genuinely matches the request."""
+
+    def _log(msg: str) -> None:
+        if memory is not None:
+            memory.log_activity(msg)
+
+    def _accept_for(intent: str):
+        return vetter.accept_for(intent) if vetter is not None else None
+
+    @function_tool
+    async def download_web_image(query: str) -> str:
+        """Find and download a real image from the web for a topic (e.g. 'deepfake',
+        'GAN architecture diagram', 'neural network flowchart') and save it locally.
+        Downloads ONLY from trusted, freely-licensed sources (Wikimedia Commons /
+        Wikipedia) with safety checks — it will refuse anything unsafe. Returns the
+        saved file path. Use when the user wants an image/photo/diagram/flowchart
+        pulled from the web."""
+        def _do():
+            path, res = images.fetch_one(query, accept=_accept_for(query))
+            _log(f"downloaded a safe web image for: {query}")
+            src = f" (source: {res.source_page})" if res.source_page else ""
+            return f"saved image to {path}{src}"
+        try:
+            return await asyncio.to_thread(_do)
+        except ImageError as e:
+            return f"error: {e}"
+
+    tools = [download_web_image]
+
+    if pages is not None:
+        @function_tool
+        async def pages_insert_web_image(query: str) -> str:
+            """Find a relevant image or flowchart/diagram on the web and insert it
+            into the current Pages document — in ONE step. Use for 'add an image of
+            deepfakes', 'insert a flowchart of how deepfakes are made', 'put a diagram
+            here'. Downloads only from trusted sources with safety checks, then places
+            it at the cursor. `query` describes the picture wanted."""
+            def _do():
+                path, res = images.fetch_one(query, accept=_accept_for(query))
+                pages.insert_image(path)
+                _log(f"inserted a web image into Pages: {query}")
+                credit = res.title or query
+                return f"inserted an image of {credit} into the document"
+            try:
+                return await asyncio.to_thread(_do)
+            except (ImageError, PagesError) as e:
+                return f"error: {e}"
+
+        tools.append(pages_insert_web_image)
+
+    return tools
+
+
+# ── Editing the OPEN Pages document (targeted formatting changes) ───────────
+def build_editor_tools(*, editor, memory=None) -> list:
+    """Make targeted formatting changes to the Pages document the user is working on
+    right now — change a heading's size, recolour text, reformat the whole thing."""
+    from jarvis.tools.pages_editor import PagesEditError
+
+    def _log(msg: str) -> None:
+        if memory is not None:
+            memory.log_activity(msg)
+
+    @function_tool
+    async def read_open_document() -> str:
+        """Read the Pages document the user currently has open, returning its NAME and
+        every paragraph with a 1-based number. Use this FIRST when the user asks to
+        change something in 'this'/'the' document ('make the heading bigger', 'reformat
+        this', 'change the second paragraph') so you can see which paragraph number is
+        the title/heading/body, then call format_pages_paragraph with that number."""
+        def _do():
+            name = editor.active_document()
+            if not name:
+                return "there's no Pages document open, sir"
+            paras = editor.read_paragraphs()
+            listing = "\n".join(f"{i}. {p}" for i, p in enumerate(paras, 1) if p.strip())
+            return f"Open document “{name}” has {len(paras)} paragraph(s):\n{listing}"
+        try:
+            return await asyncio.to_thread(_do)
+        except PagesEditError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def format_pages_paragraph(
+        paragraph: int, size: int = 0, font: str = "", bold: bool = False,
+        italic: bool = False, color: str = "",
+    ) -> str:
+        """Change the formatting of ONE paragraph (1-based) in the open Pages document.
+        First call read_open_document to find the right paragraph number. `size` in
+        points (0 = leave as is), `font` a family name (e.g. 'Georgia'), `bold`/`italic`
+        to embolden/italicise, `color` a name or #hex ('dark blue', '#1a3c8c'). Use for
+        'make the heading 32', 'increase the title size to 40', 'make paragraph 3 bold',
+        'colour the heading dark blue'."""
+        def _do():
+            msg = editor.format_paragraph(
+                paragraph, size=size or None, font=font or None,
+                bold=bold, italic=italic, color=color or None,
+            )
+            _log(f"formatted Pages paragraph {paragraph}")
+            return msg
+        try:
+            return await asyncio.to_thread(_do)
+        except PagesEditError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def format_all_pages_text(size: int = 0, font: str = "", color: str = "") -> str:
+        """Apply a font/size/colour to the ENTIRE open Pages document at once. Use for
+        'make everything 12 point', 'change the whole document to Georgia', 'set all
+        the text to black'."""
+        def _do():
+            msg = editor.format_all(size=size or None, font=font or None, color=color or None)
+            _log("formatted the whole Pages document")
+            return msg
+        try:
+            return await asyncio.to_thread(_do)
+        except PagesEditError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def reformat_pages_document(
+        font: str = "Helvetica Neue", title_size: int = 26,
+        heading_size: int = 17, body_size: int = 12,
+    ) -> str:
+        """Tidy the OPEN Pages document into a clean, consistent look — the first line
+        becomes a styled title, short lines become headings, and the rest becomes evenly
+        sized body text. Use for 'reformat this', 'clean up the formatting', 'make this
+        look consistent'. Optionally tune the font and the title/heading/body sizes."""
+        def _do():
+            msg = editor.reformat(font=font, title_size=title_size,
+                                  heading_size=heading_size, body_size=body_size)
+            _log("reformatted the Pages document")
+            return msg
+        try:
+            return await asyncio.to_thread(_do)
+        except PagesEditError as e:
+            return f"error: {e}"
+
+    return [read_open_document, format_pages_paragraph,
+            format_all_pages_text, reformat_pages_document]
+
+
+# ── Authoring a whole styled Pages document (real Title/Heading styles) ─────
+def build_authoring_tools(*, author: PagesAuthor, images: SafeImageFetcher | None = None,
+                          vetter=None, memory=None) -> list:
+    """Create a COMPLETE, properly-formatted Pages document in one shot, using Pages'
+    real built-in paragraph styles (Title / Subtitle / Heading / Body). This is the
+    right tool for 'make me a document/report/essay/notes about X' — far better
+    formatting than inserting text piece by piece."""
+    import json
+    from pathlib import Path
+
+    @function_tool
+    async def create_pages_document(
+        title: str, outline_json: str, subtitle: str = "", filename: str = "",
+    ) -> str:
+        """Create a NEW, well-formatted Pages document with REAL Pages styles (Title,
+        Subtitle, Heading, Body) — use this for 'make/write me a document/report/essay/
+        notes/article about X', especially when it needs sections, images, or a table.
+        Much better looking than adding text piece by piece.
+
+        `title` is the document title. `subtitle` is optional. `outline_json` is a JSON
+        array of content blocks, in order, each an object:
+          {"type":"heading","text":"Section name","level":1}   (level 1 or 2)
+          {"type":"body","text":"A paragraph. Use \\n\\n between paragraphs."}
+          {"type":"image","query":"deepfake"}      → safely downloads a web image
+          {"type":"image","path":"/abs/file.png"}  → an image already on disk
+          {"type":"table","rows":[["Header A","Header B"],["a1","b1"]]}
+        Compose the full body text yourself (real sentences/paragraphs), then pass the
+        blocks. Example outline_json:
+          [{"type":"heading","text":"Overview","level":1},
+           {"type":"body","text":"Deepfakes are synthetic media..."},
+           {"type":"image","query":"deepfake example"}]
+        `filename` optionally names the saved file (defaults to the title)."""
+        def _do():
+            try:
+                raw = json.loads(outline_json) if outline_json.strip() else []
+            except (json.JSONDecodeError, ValueError) as e:
+                return f"error: the outline wasn't valid JSON ({e})"
+            if not isinstance(raw, list):
+                return "error: the outline must be a JSON array of blocks"
+
+            blocks: list[dict] = [{"type": "title", "text": title}]
+            if subtitle.strip():
+                blocks.append({"type": "subtitle", "text": subtitle})
+
+            skipped = 0
+            for b in raw:
+                if not isinstance(b, dict):
+                    continue
+                if b.get("type") == "image" and b.get("query") and images is not None:
+                    try:
+                        intent = str(b["query"])
+                        accept = vetter.accept_for(intent) if vetter is not None else None
+                        path, _res = images.fetch_one(intent, accept=accept)
+                        blocks.append({"type": "image", "path": path,
+                                       "caption": b.get("caption", "")})
+                    except ImageError:
+                        skipped += 1  # a missing image never fails the whole document
+                    continue
+                blocks.append(b)
+
+            out = str(Path.home() / "Documents" / (filename.strip() or title or "Document"))
+            docx_path = author.create_document(blocks, out)
+            author.open_in_pages(docx_path)
+            if memory is not None:
+                memory.log_activity(f"authored a Pages document: {title}")
+            note = f" ({skipped} image(s) couldn't be fetched safely)" if skipped else ""
+            return f"created and opened “{title}” in Pages with proper styles{note}"
+
+        try:
+            return await asyncio.to_thread(_do)
+        except (AuthorError, OSError) as e:
+            return f"error: {e}"
+
+    return [create_pages_document]

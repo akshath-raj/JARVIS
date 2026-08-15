@@ -153,6 +153,28 @@ def test_agent_has_all_domain_tools():
     assert {"open_site", "play_youtube", "control_video"} <= names
     assert {"explain_screen", "take_screenshot"} <= names
     assert {"web_search", "remember", "forget", "recall_about_me"} <= names
+    # Pages word-processor control + clipboard
+    assert {"pages_new_document", "pages_add_title", "pages_insert_table",
+            "pages_insert_image", "pages_copy", "pages_paste", "read_clipboard"} <= names
+    # safe web-image download + insert-into-Pages
+    assert {"download_web_image", "pages_insert_web_image"} <= names
+    # whole-document authoring with real Pages styles
+    assert "create_pages_document" in names
+    # editing the open Pages document (targeted formatting)
+    assert {"read_open_document", "format_pages_paragraph",
+            "format_all_pages_text", "reformat_pages_document"} <= names
+
+
+def test_image_tools_guarded_and_pages_insert_needs_pages():
+    """download_web_image is always available; pages_insert_web_image only when a
+    Pages controller is wired in (it needs somewhere to put the image)."""
+    from jarvis.openai_agent.tools import build_image_tools
+
+    only_dl = {t.name for t in build_image_tools(images=object(), memory=_FakeMemory())}
+    assert only_dl == {"download_web_image"}
+    with_pages = {t.name for t in
+                  build_image_tools(images=object(), pages=object(), memory=_FakeMemory())}
+    assert "pages_insert_web_image" in with_pages
 
 
 def test_screen_tools_expose_question_arg_and_routing_hint():

@@ -29,9 +29,13 @@ from jarvis.config import config
 from jarvis.graph.memory import MemoryStore
 from jarvis.openai_agent.tools import (
     build_browser_tools,
+    build_authoring_tools,
+    build_editor_tools,
     build_files_tools,
     build_focus_tools,
+    build_image_tools,
     build_music_tools,
+    build_pages_tools,
     build_planner_tools,
     build_reading_tools,
     build_screen_tools,
@@ -40,7 +44,11 @@ from jarvis.openai_agent.tools import (
     build_ui_tools,
 )
 from jarvis.tools.browser import BrowserController
+from jarvis.tools.images import SafeImageFetcher
 from jarvis.tools.media import MediaController
+from jarvis.tools.pages import PagesController
+from jarvis.tools.pages_author import PagesAuthor
+from jarvis.tools.pages_editor import PagesEditor
 from jarvis.tools.reading_mode import ReadingMode
 from jarvis.tools.screen import ScreenController
 from jarvis.tools.spotify import SpotifyController
@@ -123,6 +131,38 @@ _GUIDE = (
     "file by description; find_document for where/when a file is. Other file tools "
     "organise/move/copy/open by path (you can NEVER delete). show_dashboard / "
     "hide_dashboard / open_dashboard_section / display_on_dashboard for the HUD. "
+    "PAGES (Apple's word processor). To WRITE/MAKE a whole document, report, essay, "
+    "notes or article about something, ALWAYS use create_pages_document — it produces "
+    "real Pages styles (proper Title, Subtitle, Heading, Body) and can pull in web "
+    "images and tables, so it looks far better than typing text in piece by piece. "
+    "You compose the actual prose yourself and pass the sections as its outline_json "
+    "(headings/body/image/table blocks); for pictures use an image block with a "
+    "\"query\" and it downloads one safely. Only use the piece-by-piece tools below to "
+    "EDIT a document that's already open. pages_new_document starts a blank doc; "
+    "pages_add_title / pages_add_heading for a title or section heading; "
+    "pages_insert_text to write a paragraph at the cursor, pages_append_text to add "
+    "at the end, pages_replace_all to overwrite, pages_clear to wipe it; "
+    "pages_insert_table adds a table, pages_insert_image adds an image by file path; "
+    "pages_select_all/pages_copy/pages_cut/pages_paste/pages_delete_selection edit "
+    "the selection; pages_get_text reads the doc back. To add a picture/diagram/"
+    "flowchart FROM THE WEB use pages_insert_web_image(query) — it safely downloads a "
+    "relevant image from trusted sources and drops it in (e.g. 'add an image of "
+    "deepfakes' → pages_insert_web_image('deepfake'); 'insert a flowchart of how "
+    "deepfakes are made' → pages_insert_web_image('GAN architecture diagram')). Use "
+    "download_web_image to just fetch an image file without inserting it. "
+    "pages_insert_image inserts an image already on disk by path. "
+    "EDITING THE OPEN DOCUMENT: when the user asks to change formatting in the document "
+    "they're working on ('make the heading 32', 'increase the title size', 'make this "
+    "bold', 'colour the heading dark blue', 'reformat this'), it applies to the Pages "
+    "document that is currently open — FIRST call read_open_document to see the "
+    "numbered paragraphs and work out which number is the heading/title/body, THEN call "
+    "format_pages_paragraph(paragraph=N, size=…, bold=…, color=…) on that paragraph. "
+    "Use format_all_pages_text for whole-document changes and reformat_pages_document "
+    "for a general 'reformat/clean this up'. copy_to_clipboard / "
+    "read_clipboard are the general system clipboard (work with any app). For a "
+    "multi-part document build the pieces in order (e.g. 'make a report titled X with "
+    "a heading Y and a table' → pages_new_document, pages_add_title, pages_add_heading, "
+    "pages_insert_text, pages_insert_table) and confirm once at the end. "
     "start_focus_mode when the user wants to focus / avoid distractions / do a "
     "pomodoro or deep-work session (it closes distractions and blocks reopening "
     "them); stop_focus_mode ONLY when they clearly say to end focus; focus_status "
@@ -193,8 +233,8 @@ def _build_screen() -> ScreenController:
 def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
                 media=None, screen=None, announce=None, workspace=None,
                 ui=None, open_cb=None, scheduler=None, rag=None, organizer=None,
-                focus=None, system=None, reading=None, mcp_servers=None,
-                agent_model=None):
+                focus=None, system=None, reading=None, pages=None, images=None,
+                mcp_servers=None, agent_model=None):
     """Return (triage_agent, memory). Dependencies are injectable for tests.
 
     `ui` (a UIController) enables the HUD dashboard tools; `open_cb` is called to
@@ -221,6 +261,19 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
         music_query=config.reading_music_query, dark_mode=config.reading_dark_mode,
         night_shift=config.reading_night_shift, wallpaper=config.reading_wallpaper,
     )
+    pages = pages or PagesController()
+    images = images or SafeImageFetcher(
+        download_dir=config.image_download_dir,
+        allowed_hosts=config.image_allowed_hosts,
+        max_bytes=config.image_max_bytes,
+    )
+    # Vision+reasoning image vetter: look at each candidate and judge its fit before
+    # using it in a document. Best-effort (fails open); off if no model key.
+    vetter = None
+    if config.image_vetting_enabled:
+        from jarvis.tools.image_vetting import ImageVetter
+        v = ImageVetter.from_config()
+        vetter = v if v.enabled else None
 
     model = agent_model or _resolve_model()  # agent_model lets tests/benchmarks override
     settings = ModelSettings(temperature=0.2)
@@ -243,6 +296,10 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
     tools += build_screen_tools(screen=screen, memory=memory, ui=ui, rag=rag)
     tools += build_system_tools(system=system, memory=memory)
     tools += build_reading_tools(reading=reading, memory=memory)
+    tools += build_pages_tools(pages=pages, memory=memory)
+    tools += build_image_tools(images=images, pages=pages, vetter=vetter, memory=memory)
+    tools += build_authoring_tools(author=PagesAuthor(), images=images, vetter=vetter, memory=memory)
+    tools += build_editor_tools(editor=PagesEditor(), memory=memory)
     tools += build_triage_tools(tavily=tavily, memory=memory)
     if ui is not None:
         tools += build_ui_tools(ui=ui, open_cb=open_cb)
@@ -281,6 +338,7 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
 _CONTINUE_TOOLS = frozenset({
     "explain_screen", "explain_this", "ask_documents", "summarize_document",
     "find_document", "web_search", "list_folder", "recall_about_me",
+    "pages_get_text", "read_clipboard", "read_open_document",
 })
 
 
