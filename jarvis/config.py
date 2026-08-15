@@ -87,6 +87,16 @@ class Config:
         ).split(",")
         if w.strip()
     )
+    # Wake phrase: the bare word "jarvis" activates by default (a leading "hey" is
+    # optional). Set JARVIS_WAKE_REQUIRE_HEY=1 to require the full "hey jarvis" phrase
+    # instead — that cuts false wakes from ambient speech / Whisper mishearings.
+    wake_require_hey: bool = _truthy(os.getenv("JARVIS_WAKE_REQUIRE_HEY", "0"))
+    # Strict mode (default ON): EVERY turn must contain the wake word — the follow-up
+    # / continuation windows below are ignored, so JARVIS never treats ambient speech
+    # (you talking to someone else, background chatter) as a command. Set 0 to allow
+    # answering a clarifying question / chaining commands without the wake word (only
+    # sensible with headphones or good echo cancellation).
+    wake_strict: bool = _truthy(os.getenv("JARVIS_WAKE_STRICT", "1"))
     wake_followup_seconds: float = float(os.getenv("JARVIS_WAKE_FOLLOWUP", "5"))
     # After a normal (non-question) answer, optionally stay awake briefly so
     # back-to-back commands work without repeating the wake word. OFF by default:

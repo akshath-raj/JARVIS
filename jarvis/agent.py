@@ -35,8 +35,10 @@ def _wake() -> WakeController:
     return WakeController(
         enabled=config.wake_enabled,
         words=config.wake_words,
+        require_hey=config.wake_require_hey,
         followup_seconds=config.wake_followup_seconds,
         continuation_seconds=config.wake_continuation_seconds,
+        strict=config.wake_strict,
     )
 
 
