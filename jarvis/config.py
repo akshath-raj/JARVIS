@@ -328,6 +328,16 @@ class Config:
     # Model that reasons over snapshots and drives the browser. A frontier model is
     # far more reliable at this than local/oss models (verified). Uses OPENAI_API_KEY.
     pw_model: str = os.getenv("JARVIS_PW_MODEL", os.getenv("JARVIS_BROWSER_FRONTIER_MODEL", "gpt-4.1-mini"))
+    # Which MCP browser backend the web agent drives:
+    #   "playwright" (default) — Microsoft's @playwright/mcp: accessibility snapshot +
+    #                 act-by-ref. Mature, widely used.
+    #   "brocogni"             — browser-cognition-mcp: compiles each page into a
+    #                 semantic map with self-healing selector fallbacks; may navigate
+    #                 tricky pages more reliably. Younger project — opt-in trial.
+    # Both are local, Playwright-based, and need Node (npx) + `npx playwright install`.
+    browser_mcp_backend: str = os.getenv("JARVIS_BROWSER_MCP", "playwright")
+    # Extra CLI args passed to the brocogni server (space-separated), if ever needed.
+    brocogni_args: str = os.getenv("JARVIS_BROCOGNI_ARGS", "")
 
     # ── Documents / assignments ────────────────────────────────────────
     # Preferred AI apps for "do the assignment", in order. The first AVAILABLE one

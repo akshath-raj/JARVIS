@@ -36,6 +36,27 @@ def test_mcp_args_headless_and_caps(monkeypatch):
     assert args[args.index("--caps") + 1] == "vision,pdf"
 
 
+def test_mcp_spec_defaults_to_playwright(monkeypatch):
+    monkeypatch.setattr(pw_agent, "config", _cfg())     # no backend set → default
+    name, args, instr, backend = pw_agent._mcp_spec()
+    assert backend == "playwright" and name == "playwright"
+    assert "@playwright/mcp@latest" in args
+    assert "accessibility" in instr.lower()             # the Playwright playbook
+
+
+def test_mcp_spec_selects_brocogni(monkeypatch):
+    monkeypatch.setattr(
+        pw_agent, "config",
+        _cfg(browser_mcp_backend="brocogni", brocogni_args="--foo bar"),
+    )
+    name, args, instr, backend = pw_agent._mcp_spec()
+    assert backend == "brocogni" and name == "brocogni"
+    assert "browser-cognition-mcp" in args
+    assert args[-2:] == ["--foo", "bar"]                # extra args appended
+    assert "browser_observe" in instr                   # the brocogni playbook
+    assert "@playwright/mcp@latest" not in args
+
+
 def test_disabled_agent_returns_message(monkeypatch):
     monkeypatch.setattr(pw_agent, "config", _cfg(pw_agent_enabled=False))
     assert "turned off" in asyncio.run(pw_agent.run_web_task("do something"))
