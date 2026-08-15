@@ -178,6 +178,32 @@ class UIController:
         self._emit({"type": "identity", "user": name})
         return name
 
+    # ── memory bank edits (from the HUD's add/delete controls) ──────────────
+    def add_memory(self, text: str) -> bool:
+        """Add a user-entered memory/preference straight to the durable profile.
+        Returns True if stored."""
+        text = (text or "").strip()
+        if self._memory is None or not text:
+            return False
+        try:
+            self._memory.remember(text, "explicit")  # written to the profile now
+        except Exception:
+            return False
+        self._emit({"type": "memory"})  # nudge connected HUDs to refresh
+        return True
+
+    def delete_memory(self, text: str) -> bool:
+        """Delete a memory the HUD passed back verbatim. Returns True if removed."""
+        if self._memory is None or not (text or "").strip():
+            return False
+        try:
+            removed = bool(self._memory.remove_exact(text))
+        except Exception:
+            return False
+        if removed:
+            self._emit({"type": "memory"})
+        return removed
+
     # ── data + polling (called from the web server) ─────────────────────────
     def _about(self) -> list[str]:
         if self._memory is None:

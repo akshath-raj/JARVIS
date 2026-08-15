@@ -52,6 +52,18 @@ def test_forget(tmp_path):
     assert m.forget("nonexistent thing").startswith("I have no memory")
 
 
+def test_remove_exact(tmp_path):
+    # the HUD delete button passes a bullet back verbatim → only an EXACT (normalised)
+    # match is removed, so deleting one memory never takes out a similar one.
+    m = _mem(tmp_path)
+    m.remember("prefers tea")
+    m.remember("uses vim")
+    assert m.remove_exact("Prefers   Tea") is True     # normalised exact match
+    assert "prefers tea" not in m.all()
+    assert m.remove_exact("never stored") is False      # no match → nothing removed
+    assert m.all() == ["uses vim"]
+
+
 def test_profile_persistence_round_trip(tmp_path):
     m = _mem(tmp_path)
     m.remember("name is Akshath")

@@ -95,6 +95,28 @@ class UIServer:
             name = controller.set_user_name(str((data or {}).get("name", "")))
             return JSONResponse({"ok": bool(name), "user": name})
 
+        async def memory_add(request: Request):
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            ok = controller.add_memory((data or {}).get("text", ""))
+            return JSONResponse(
+                {"ok": ok, "memories": controller.state(0)["memories"]},
+                status_code=200 if ok else 400,
+            )
+
+        async def memory_delete(request: Request):
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            ok = controller.delete_memory((data or {}).get("text", ""))
+            return JSONResponse(
+                {"ok": ok, "memories": controller.state(0)["memories"]},
+                status_code=200 if ok else 404,
+            )
+
         async def favicon(request: Request):
             from starlette.responses import Response
 
@@ -137,6 +159,8 @@ class UIServer:
             Route("/", index),
             Route("/api/state", state),
             Route("/api/user/name", set_name, methods=["POST"]),
+            Route("/api/memory/add", memory_add, methods=["POST"]),
+            Route("/api/memory/delete", memory_delete, methods=["POST"]),
             Route("/favicon.ico", favicon),
             WebSocketRoute("/ws", ws_endpoint),
             Mount("/static", app=StaticFiles(directory=str(_STATIC)), name="static"),

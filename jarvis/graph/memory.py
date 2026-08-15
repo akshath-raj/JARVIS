@@ -148,6 +148,21 @@ class MemoryStore:
                 return f"forgotten: {removed}"
         return f"I have no memory matching '{query}'"
 
+    def remove_exact(self, text: str) -> bool:
+        """Delete the profile bullet that EXACTLY matches `text` (used by the HUD's
+        delete button, which passes a bullet back verbatim). Returns True if a bullet
+        was removed."""
+        target = _norm(text)
+        if not target:
+            return False
+        lines = self._profile_lines()
+        kept = [ln for ln in lines if _norm(_bullet(ln)) != target]
+        if len(kept) == len(lines):
+            return False
+        self._write_profile("\n".join(kept))
+        logger.info("removed memory (UI): %s", text)
+        return True
+
     # ── transient activity/conversation log ─────────────────────────────────
     def log_activity(self, detail: str) -> None:
         """Record something the user did/said. Best-effort; never raises into the

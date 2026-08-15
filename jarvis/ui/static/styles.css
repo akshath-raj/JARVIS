@@ -112,6 +112,23 @@ body{
 @keyframes rowIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
 .mem-list li.empty,.conv-list li.empty{border-style:dashed;opacity:.5;text-align:center;padding:16px}
 .mem-list li.empty::before{content:""}
+/* memory rows: text + delete button on one line */
+.mem-list li{display:flex;align-items:flex-start;gap:8px}
+.mem-list li.empty{display:block}
+.mem-list li .mem-text{flex:1;min-width:0;word-break:break-word}
+.mem-list li .mem-del{flex:none;background:none;border:none;color:var(--cyan);cursor:pointer;
+  font-size:16px;line-height:1;opacity:.4;padding:0 2px;transition:opacity .15s,color .15s}
+.mem-list li:hover .mem-del{opacity:.85}
+.mem-list li .mem-del:hover{color:#ff6b6b;opacity:1}
+/* add-a-memory form */
+.mem-add{display:flex;gap:6px;margin-bottom:9px}
+.mem-add input{flex:1;min-width:0;background:rgba(72,217,255,.05);border:1px solid var(--line);
+  color:#d7f6ff;font-size:12px;padding:7px 9px;border-radius:3px;outline:none}
+.mem-add input:focus{border-color:var(--cyan);background:rgba(72,217,255,.09)}
+.mem-add input::placeholder{color:rgba(215,246,255,.4)}
+.mem-add button{flex:none;width:30px;background:rgba(72,217,255,.08);border:1px solid var(--line);
+  color:var(--cyan);font-size:17px;line-height:1;cursor:pointer;border-radius:3px;transition:background .15s,border-color .15s}
+.mem-add button:hover{background:rgba(72,217,255,.18);border-color:var(--cyan)}
 
 /* conversations */
 .conv-list li{border:1px solid var(--line);margin-bottom:8px;background:rgba(72,217,255,.04);opacity:0;animation:rowIn .5s ease forwards}

@@ -31,6 +31,53 @@ class _Mem:
         return "ok"
 
 
+class _EditableMem:
+    """A memory store the HUD can add to and delete from (list-backed)."""
+    def __init__(self, items=None):
+        self.items = list(items or [])
+
+    def all(self):
+        return list(self.items)
+
+    def remember(self, text, source="explicit"):
+        self.items.append(text)
+        return "ok"
+
+    def remove_exact(self, text):
+        if text in self.items:
+            self.items.remove(text)
+            return True
+        return False
+
+
+def test_add_and_delete_memory_from_hud():
+    mem = _EditableMem(["likes tea"])
+    ui = UIController(user="A", memory=mem)
+    assert ui.add_memory("uses vim") is True
+    assert "uses vim" in ui.state(0)["memories"]
+    assert ui.add_memory("   ") is False                 # blank rejected
+    assert ui.delete_memory("uses vim") is True
+    assert "uses vim" not in ui.state(0)["memories"]
+    assert ui.delete_memory("not stored") is False       # nothing to delete
+
+
+def test_memory_routes_add_and_delete(tmp_path):
+    from starlette.testclient import TestClient
+
+    from jarvis.ui.server import UIServer
+
+    ui = UIController(user="A", memory=_EditableMem())
+    with TestClient(UIServer(ui, port=0)._app()) as c:
+        r = c.post("/api/memory/add", json={"text": "I love jazz"})
+        assert r.status_code == 200 and r.json()["memories"] == ["I love jazz"]
+        r = c.post("/api/memory/add", json={"text": ""})
+        assert r.status_code == 400 and r.json()["ok"] is False
+        r = c.post("/api/memory/delete", json={"text": "I love jazz"})
+        assert r.status_code == 200 and r.json()["memories"] == []
+        r = c.post("/api/memory/delete", json={"text": "ghost"})
+        assert r.status_code == 404
+
+
 # ── first-launch name prompt ────────────────────────────────────────────────
 def test_needs_name_when_no_user_set(tmp_path):
     ui = UIController(user="", suggestion="Alex")

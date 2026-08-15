@@ -68,10 +68,49 @@ function renderProfile(state) {
   }
   state.memories.forEach((m, idx) => {
     const li = document.createElement("li");
-    li.textContent = m;
     li.style.animationDelay = `${idx * 0.05}s`;
+    const span = document.createElement("span");
+    span.className = "mem-text";
+    span.textContent = m;
+    const del = document.createElement("button");
+    del.className = "mem-del";
+    del.title = "Delete memory";
+    del.textContent = "×";
+    del.addEventListener("click", () => deleteMemory(m));
+    li.appendChild(span);
+    li.appendChild(del);
     list.appendChild(li);
   });
+}
+
+// Add / delete memories from the HUD, then re-render immediately from the reply.
+async function addMemory(text) {
+  text = (text || "").trim();
+  if (!text) return;
+  try {
+    const r = await fetch("/api/memory/add", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const data = await r.json();
+    if (data && data.memories) applyMemories(data.memories);
+  } catch (_) {}
+}
+
+async function deleteMemory(text) {
+  try {
+    const r = await fetch("/api/memory/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const data = await r.json();
+    if (data && data.memories) applyMemories(data.memories);
+  } catch (_) {}
+}
+
+function applyMemories(memories) {
+  lastMemSig = null;            // force renderProfile to redraw the memory list
+  if (lastState) { lastState.memories = memories; renderProfile(lastState); }
 }
 
 function fmtWhen(ts) {
@@ -400,3 +439,13 @@ connect();
 // first-launch name form
 const _nameForm = $("name-prompt");
 if (_nameForm) _nameForm.addEventListener("submit", (e) => { e.preventDefault(); submitName(); });
+
+// add-a-memory form
+const _memForm = $("mem-add-form");
+if (_memForm) _memForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("mem-add-input");
+  const text = input.value;
+  input.value = "";
+  addMemory(text);
+});

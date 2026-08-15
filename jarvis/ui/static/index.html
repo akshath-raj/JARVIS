@@ -62,6 +62,11 @@
         </section>
         <section class="panel grow" id="panel-memories" data-section="memories">
           <div class="panel-h"><span>MEMORY BANK</span><span class="count" id="mem-count">0</span></div>
+          <form class="mem-add" id="mem-add-form" autocomplete="off">
+            <input type="text" id="mem-add-input" maxlength="200"
+                   placeholder="Add a memory or preference…" aria-label="Add a memory" />
+            <button type="submit" id="mem-add-btn" title="Add memory">+</button>
+          </form>
           <ul class="mem-list" id="mem-list"></ul>
         </section>
         <section class="panel grow" id="panel-todos" data-section="todos">
