@@ -50,6 +50,24 @@ def test_open_url_invokes_open_with_app(monkeypatch):
     assert calls["args"] == ["open", "-a", "Google Chrome", "https://www.youtube.com"]
 
 
+def test_open_url_dedupes_immediate_double_open(monkeypatch):
+    # A single "open Netflix" can reach open_url twice (duplicate tool call / turn);
+    # the second identical open within the window is skipped so it never opens twice.
+    calls = []
+    monkeypatch.setattr("jarvis.tools.browser.subprocess.run",
+                        lambda args, **kw: calls.append(args) or mock.Mock(returncode=0, stderr=""))
+    bc = BrowserController("Google Chrome")
+    bc.open_url("https://www.netflix.com/watch/80057281")
+    bc.open_url("https://www.netflix.com/watch/80057281")   # instant duplicate → skipped
+    assert len(calls) == 1
+    # a DIFFERENT url still opens, and so does the same url after the window lapses
+    bc.open_url("https://www.youtube.com")
+    assert len(calls) == 2
+    bc._last_open_at -= 10  # simulate the dedup window having elapsed
+    bc.open_url("https://www.youtube.com")
+    assert len(calls) == 3
+
+
 def test_open_url_rejects_non_web_scheme(monkeypatch):
     ran = []
     monkeypatch.setattr("jarvis.tools.browser.subprocess.run", lambda *a, **k: ran.append(a))
@@ -102,6 +120,52 @@ def test_first_video_id_missing_raises(monkeypatch):
     monkeypatch.setattr(BrowserController, "_get", lambda self, url: "no ids here")
     with pytest.raises(BrowserError):
         BrowserController().play_youtube("something")
+
+
+# ── Netflix play (title id resolved from web-search URLs) ──────────────────
+def test_netflix_id_from_urls_finds_first_and_decodes():
+    # title/ and watch/ both carry the same id; encoded redirect URLs still resolve
+    urls = [
+        "https://www.google.com/",
+        "https://www.netflix.com/title/81234567",
+        "https://www.netflix.com/title/70000000",
+    ]
+    assert BrowserController.netflix_id_from_urls(urls) == "81234567"
+    encoded = ["https://r.example/l/?u=https%3A%2F%2Fwww.netflix.com%2Fwatch%2F81111111"]
+    assert BrowserController.netflix_id_from_urls(encoded) == "81111111"
+    assert BrowserController.netflix_id_from_urls(["https://imdb.com/x"]) == ""
+
+
+def test_play_netflix_opens_watch_url_for_resolved_id(monkeypatch):
+    opened = {}
+    monkeypatch.setattr(BrowserController, "open_url",
+                        lambda self, url: opened.setdefault("url", url) or url)
+    msg = BrowserController().play_netflix("Wednesday", title_id="81234567")
+    assert opened["url"] == "https://www.netflix.com/watch/81234567"  # /watch → plays
+    assert "netflix" in msg.lower()
+
+
+def test_play_netflix_falls_back_to_search_without_id(monkeypatch):
+    opened = {}
+    monkeypatch.setattr(BrowserController, "open_url",
+                        lambda self, url: opened.setdefault("url", url) or url)
+    msg = BrowserController().play_netflix("an obscure title")   # no title_id resolved
+    assert opened["url"] == "https://www.netflix.com/search?q=an%20obscure%20title"
+    assert "search" in msg.lower()
+
+
+def test_play_netflix_rejects_non_numeric_id(monkeypatch):
+    # a junk id must not build a bogus /watch URL — fall back to search instead
+    opened = {}
+    monkeypatch.setattr(BrowserController, "open_url",
+                        lambda self, url: opened.setdefault("url", url) or url)
+    BrowserController().play_netflix("x", title_id="not-a-number")
+    assert opened["url"].startswith("https://www.netflix.com/search?q=")
+
+
+def test_play_netflix_empty_query_errors():
+    with pytest.raises(BrowserError):
+        BrowserController().play_netflix("  ")
 
 
 def test_open_reels_platform_switch(monkeypatch):
@@ -166,3 +230,22 @@ def test_tavily_bad_key_status(monkeypatch):
     monkeypatch.setattr("jarvis.tools.web.requests.post", lambda *a, **k: _resp({}, status=401))
     with pytest.raises(WebError, match="401"):
         TavilyClient("key").search("x")
+
+
+def test_tavily_search_urls_returns_result_urls(monkeypatch):
+    payload = {"results": [
+        {"url": "https://www.netflix.com/title/81234567", "title": "Wednesday"},
+        {"url": "https://en.wikipedia.org/wiki/Wednesday", "title": "wiki"},
+        {"title": "no url here"},
+    ]}
+    captured = {}
+
+    def fake_post(url, json=None, timeout=None):
+        captured["json"] = json
+        return _resp(payload)
+
+    monkeypatch.setattr("jarvis.tools.web.requests.post", fake_post)
+    urls = TavilyClient("key").search_urls("Wednesday netflix")
+    assert urls == ["https://www.netflix.com/title/81234567",
+                    "https://en.wikipedia.org/wiki/Wednesday"]
+    assert captured["json"]["include_answer"] is False   # URLs mode skips the synthesis

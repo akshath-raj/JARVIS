@@ -190,9 +190,65 @@ class RAGPipeline:
         return out
 
     def resolve_document(self, description: str, *, k: int = 12) -> dict | None:
-        """The single best-matching document for a description (or None)."""
+        """The single best-matching document for a description (or None).
+
+        An EXACT filename (with or without extension) wins outright — a caller that
+        already knows the file, e.g. reviewing "Jake_s_Resume.pdf" it just opened,
+        must not be fuzzy-matched onto some other document."""
+        low = (description or "").strip().lower()
+        if low:
+            for d in self._store.documents():
+                fn = (d.get("filename") or "").lower()
+                if low == fn or low == Path(fn).stem:
+                    return d
         ranked = self.rank_documents(description, k=k)
         return ranked[0] if ranked else None
+
+    def related_documents(self, description: str, *, ratio: float = 0.12,
+                          floor: float = 1.0, max_docs: int = 10) -> list[dict]:
+        """All documents CLEARLY related to a topic/description (for "open all my X
+        docs"), best first.
+
+        Two very different queries have to work: a topic that lives in the CONTENT
+        ("natural disaster" → the disaster-management PDFs, whose filenames never say
+        "disaster"), and a word that lives in the FILENAME ("resume" → the two résumé
+        files, which fuzzy content search buries under noise). So:
+
+          * If files' NAMES contain ALL the distinctive query words, those ARE the
+            set — a precise, noise-free signal (handles "resume", "invoice", …).
+          * Otherwise fall back to the semantic cluster: keep everything at or above
+            both a fraction of the top score (`ratio`) and an absolute `floor`
+            (handles content topics, drops weak keyword-only noise).
+
+        If nothing clears the bar we still return the single best match, so "open
+        all" never comes back empty when there is a plausible hit."""
+        # A wide semantic net (large k) so the whole related cluster surfaces, not
+        # just the few chunks nearest the top match.
+        ranked = self.rank_documents(description, k=40)
+        if not ranked:
+            return []
+        # Distinctive query words, singularised so "resumes" matches a "…resume.pdf".
+        def _root(w: str) -> str:
+            return w[:-1] if len(w) > 4 and w.endswith("s") else w
+        roots = [_root(w) for w in re.findall(r"[a-z0-9]+", description.lower()) if len(w) > 2]
+        if roots:
+            # Scan EVERY document (not just the pre-ranked ones) for a filename that
+            # names all the query words — fuzzy content ranking may have buried a real
+            # match ("Jake_s_Resume.pdf" never surfaces for the query "resumes").
+            by_src_score = {d["source"]: d.get("score", 0.0) for d in ranked}
+            named = []
+            for d in self._store.documents():
+                if all(r in Path(d["source"]).stem.lower() for r in roots):
+                    rec = dict(d)
+                    rec["score"] = round(by_src_score.get(d["source"], 0.0), 4)
+                    named.append(rec)
+            if named:  # the filename literally names all query words → precise set
+                named.sort(key=lambda d: d["score"], reverse=True)
+                return named[:max_docs]
+        top = ranked[0].get("score", 0.0) or 0.0
+        cut = max(ratio * top, floor)
+        kept = [d for d in ranked if (d.get("score", 0.0) or 0.0) >= cut]
+        return (kept or ranked[:1])[:max_docs]
 
     def locate_in_document(self, source_contains: str, text: str) -> dict | None:
         """Find where a snippet of visible text sits inside a document — the chunk
@@ -294,6 +350,101 @@ class RAGPipeline:
         if ans is None:
             return "I couldn't reach the answering model, sir."
         return ans + f" (Source: {doc['filename']}.)"
+
+    def review(self, document: str, *, page: int = 0, max_chunks: int = 40,
+               focus: str = "") -> str:
+        """Read one of the user's documents and return specific, actionable
+        improvement suggestions (résumé, essay, SOP, report…). Unlike `answer` (which
+        only reports what the text says and refuses to opine), this asks the model to
+        CRITIQUE the content and say how to make it better."""
+        if self._store.stats()["chunks"] == 0:
+            return "I haven't indexed any documents yet, sir."
+        doc = self.resolve_document(document) if document else None
+        if not doc:
+            return f"I couldn't find a document matching “{document}”, sir."
+        chunks = self._store.chunks_for(doc["source"], page=page or None)
+        if not chunks:
+            return f"I couldn't read {doc['filename']} from the index, sir."
+        body = "\n\n".join(c["text"] for c in chunks[:max_chunks])
+        ask = (focus or "").strip() or "what could be improved"
+        prompt = (
+            "You are an expert reviewer. Read the document below and give the user "
+            f"specific, actionable feedback on {ask}. Point to concrete weaknesses and "
+            "exactly how to fix them (wording, structure, missing detail, impact); be "
+            "candid and useful, not generic praise. Spoken aloud as plain prose — no "
+            "markdown, no bullet symbols.\n\n"
+            f"DOCUMENT ({doc['filename']}):\n{body}"
+        )
+        ans = self._complete(prompt, max_tokens=900)
+        if ans is None:
+            return "I couldn't reach the reviewing model, sir."
+        return f"For {doc['filename']}: {ans}"
+
+    def summarize_located(self, *, document: str = "", source: str = "",
+                          locator_text: str = "", page: int = 0,
+                          section_only: bool = False, radius: int = 3,
+                          max_chunks: int = 40) -> dict | None:
+        """Summarise the document the user is looking at on screen — the whole file,
+        or just the current section/page when `section_only`. Resolves the document
+        from an on-screen name/title with the same name-overlap confidence guard as
+        `explain_topic`, returning None when the live document isn't confidently
+        indexed so the caller can fall back to screen vision. Returns {answer,
+        document, page, subtopic, cite}."""
+        if self._store.stats()["chunks"] == 0:
+            return None
+        src, label = source, (Path(source).name if source else "")
+        if not src and document:
+            doc = self.resolve_document(document)
+            # Only trust the match if the on-screen title shares a real word with the
+            # resolved filename; otherwise the live document probably isn't indexed
+            # and we'd summarise the WRONG file — bail so the caller uses vision.
+            if doc and _name_overlaps(document, doc["filename"]):
+                src, label = doc["source"], doc["filename"]
+        if not src:
+            return None
+
+        section = ""
+        if section_only:
+            # Narrow to the subtopic/page on screen, spanning the pages just above
+            # and below so a section that runs across pages stays whole.
+            center = None
+            loc = self.locate_in_document(src, locator_text) if locator_text else None
+            if loc is None and page:
+                pg = self._store.chunks_for(src, page=page)
+                loc = pg[0] if pg else None
+            if loc is not None:
+                m = loc.get("metadata", {})
+                center = m.get("chunk_index")
+                section = m.get("section", "")
+                page = page or m.get("page", 0) or 0
+            if center is not None:
+                chunks = self._store.context_window(src, center, radius=radius, section=section)
+            elif page:
+                chunks = self._store.chunks_for(src, page=page)
+            else:
+                chunks = self._store.chunks_for(src)  # couldn't locate → whole doc
+        else:
+            chunks = self._store.chunks_for(src)
+        if not chunks:
+            return None
+
+        body = "\n\n".join(c["text"] for c in chunks[:max_chunks])
+        scope = ""
+        if section_only:
+            scope = (f"the section “{section}” of " if section
+                     else (f"page {page} of " if page else ""))
+        prompt = (
+            f"Summarise {scope}the document below for the user, spoken aloud as plain "
+            "prose (no markdown, no bullet symbols). Capture the main points and any "
+            "key conclusions in a few sentences.\n\n"
+            f"DOCUMENT ({label}):\n{body}"
+        )
+        ans = self._complete(prompt, max_tokens=900)
+        if ans is None:
+            return None
+        cite = label + (f" · p{page}" if (section_only and page) else "")
+        return {"answer": ans + f" (Source: {label}.)", "document": label,
+                "page": page if section_only else 0, "subtopic": section, "cite": cite}
 
     def explain_topic(self, question: str, *, source: str = "", document: str = "",
                       locator_text: str = "", page: int = 0, radius: int = 3) -> dict | None:

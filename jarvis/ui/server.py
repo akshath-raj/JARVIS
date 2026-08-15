@@ -92,6 +92,24 @@ class UIServer:
 
             return Response(status_code=204)
 
+        async def memory_add(request: Request):
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            ok = controller.add_memory((body or {}).get("text", ""))
+            return JSONResponse({"ok": ok, "memories": controller.state(0)["memories"]},
+                                status_code=200 if ok else 400)
+
+        async def memory_delete(request: Request):
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            ok = controller.delete_memory((body or {}).get("text", ""))
+            return JSONResponse({"ok": ok, "memories": controller.state(0)["memories"]},
+                                status_code=200 if ok else 404)
+
         async def ws_endpoint(ws: WebSocket):
             await ws.accept()
             server._clients.add(ws)
@@ -128,6 +146,8 @@ class UIServer:
         routes = [
             Route("/", index),
             Route("/api/state", state),
+            Route("/api/memory/add", memory_add, methods=["POST"]),
+            Route("/api/memory/delete", memory_delete, methods=["POST"]),
             Route("/favicon.ico", favicon),
             WebSocketRoute("/ws", ws_endpoint),
             Mount("/static", app=StaticFiles(directory=str(_STATIC)), name="static"),

@@ -15,6 +15,7 @@ import random
 from langchain_core.tools import tool
 
 from jarvis.browser_agent.client import run_browser_task
+from jarvis.browser_agent.pw_agent import run_web_task_and_report
 from jarvis.config import config
 from jarvis.graph.memory import MemoryStore
 from jarvis.tools.browser import BrowserController, BrowserError
@@ -321,6 +322,8 @@ def build_tools(
             instruction: The full task in the user's words, with any subject,
                 teacher, site, or account details they mentioned.
         """
+        if config.pw_agent_enabled:
+            return await run_web_task_and_report(instruction, announce=announce)
         return await run_browser_task(instruction, announce=announce)
 
     # ── Documents / assignments ───────────────────────────────────────────
@@ -403,7 +406,7 @@ def build_tools(
         open_site, play_youtube, latest_channel_video, open_reels, open_shorts,
         web_search, remember, forget, recall_about_me,
     ]
-    if config.browser_agent_enabled:
+    if config.pw_agent_enabled or config.browser_agent_enabled:
         tools.append(browser_task)
     if workspace is not None:
         tools += [download_and_explain, do_assignment, open_answer]

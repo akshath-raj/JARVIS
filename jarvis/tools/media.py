@@ -132,3 +132,39 @@ class MediaController:
     def close_tab(self) -> str:
         self._osa(f'tell application "{self._app}" to close active tab of front window')
         return "closed the tab"
+
+    def close_tabs_matching(self, query: str) -> str:
+        """Close EVERY tab in the user's real Chrome whose URL or title contains
+        `query` (case-insensitive) — e.g. 'vtop', 'youtube'. Acts on the actual
+        visible Chrome (all windows), not any headless/cloned profile."""
+        q = (query or "").strip().replace('"', "").replace("\\", "").lower()
+        if not q:
+            raise MediaError("which tabs should I close, sir?")
+        # Iterate each window's tabs in REVERSE so closing one doesn't shift the
+        # indices of tabs we haven't checked yet. `contains` ignores case in
+        # AppleScript, and we lower-cased the query to match.
+        script = (
+            f'tell application "{self._app}"\n'
+            f'  set q to "{q}"\n'
+            "  set n to 0\n"
+            "  repeat with w in windows\n"
+            "    set tabList to tabs of w\n"
+            "    repeat with i from (count of tabList) to 1 by -1\n"
+            "      set t to item i of tabList\n"
+            "      try\n"
+            "        if ((URL of t contains q) or (title of t contains q)) then\n"
+            "          close t\n          set n to n + 1\n"
+            "        end if\n"
+            "      end try\n"
+            "    end repeat\n"
+            "  end repeat\n"
+            "  return n\nend tell"
+        )
+        out = self._osa(script)
+        try:
+            n = int(out)
+        except (ValueError, TypeError):
+            n = 0
+        if n == 0:
+            return f"no {query} tabs were open, sir"
+        return f"closed {n} {query} tab" + ("s" if n != 1 else "") + ", sir"

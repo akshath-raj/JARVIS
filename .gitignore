@@ -16,5 +16,8 @@ models/*.bin
 # OS
 .DS_Store
 
+# Runtime artifacts produced by the Playwright MCP browser agent
+.playwright-mcp/
+
 # local launch/marketing notes (not for the public repo)
 LAUNCH_KIT.md

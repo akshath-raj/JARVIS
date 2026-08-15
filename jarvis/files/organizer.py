@@ -104,7 +104,7 @@ class FileOrganizer:
         return d
 
     # ── open ────────────────────────────────────────────────────────────────────
-    def open_paths(self, paths: list[str], *, cap: int = 12) -> str:
+    def open_paths(self, paths: list[str], *, cap: int = 10) -> str:
         opened, opened_paths = [], []
         for path in paths[:cap]:
             p = self.sb.resolve(path, must_exist=True)

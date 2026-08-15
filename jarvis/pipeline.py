@@ -46,16 +46,24 @@ def build_stt() -> _stt.STT:
     if config.cloud:
         if not config.deepgram_api_key:
             raise ConfigError("CLOUD mode needs DEEPGRAM_API_KEY for speech-to-text.")
-        return deepgram.STT(
+        engine = deepgram.STT(
             api_key=config.deepgram_api_key,
             model=config.deepgram_model,
             language="en",
             keyterm=["Jarvis", "Hey Jarvis"],
         )
+    else:
+        from jarvis.plugins.whisper_stt import WhisperSTT
 
-    from jarvis.plugins.whisper_stt import WhisperSTT
+        engine = WhisperSTT(model=config.whisper_model, backend=config.whisper_backend)
 
-    return WhisperSTT(model=config.whisper_model, backend=config.whisper_backend)
+    if not config.voice_verify_enabled:
+        return engine
+    from jarvis.plugins.speaker_gate import SpeakerVerifiedSTT
+    from jarvis.voice.siamese import OwnerVoiceVerifier
+
+    logger.info("STT: local owner-voice verification enabled")
+    return SpeakerVerifiedSTT(engine, OwnerVoiceVerifier.load(config.voice_profile_path))
 
 
 # ── LLM ────────────────────────────────────────────────────────────────

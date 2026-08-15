@@ -12,9 +12,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Always load the project's own .env (parent of this package), regardless of the
-# current working directory, so keys resolve the same way from anywhere.
-load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+# Load JARVIS's .env regardless of the current working directory, so keys resolve
+# the same way from anywhere. JARVIS_ENV_FILE (set by the `jarvis` npm launcher)
+# takes precedence — it points at a user-owned file (e.g. ~/.jarvis/.env) that
+# survives package reinstalls; otherwise fall back to the repo's own .env.
+_env_file = os.getenv("JARVIS_ENV_FILE")
+load_dotenv(_env_file if _env_file else Path(__file__).resolve().parents[1] / ".env")
 
 
 def _truthy(val: str) -> bool:
@@ -67,26 +70,39 @@ class Config:
     # Use the LiveKit MultilingualModel turn detector (better than VAD-only).
     use_turn_detector: bool = _truthy(os.getenv("JARVIS_TURN_DETECTOR", "1"))
     # Endpointing: JARVIS only assumes you've finished once your speech gap exceeds
-    # `endpoint_delay` seconds (400ms default) — so short breaths don't cut you off.
+    # `endpoint_delay` seconds (1s default) — so a normal pause after "hey jarvis",
+    # or a breath mid-thought, doesn't get split into two separate turns.
     # When your sentence still sounds unfinished, the turn detector keeps waiting up
     # to `endpoint_max_delay`, giving you room to think mid-thought.
-    endpoint_delay: float = float(os.getenv("JARVIS_ENDPOINT_DELAY", "0.4"))
+    endpoint_delay: float = float(os.getenv("JARVIS_ENDPOINT_DELAY", "1.0"))
     endpoint_max_delay: float = float(os.getenv("JARVIS_ENDPOINT_MAX_DELAY", "6.0"))
 
     # ── Activation (wake word + smart follow-up) ───────────────────────
-    # Say "jarvis" or "hey jarvis" to activate. After JARVIS asks a clarifying
-    # question, the next turn is answered WITHOUT the wake word for a short window;
-    # after a normal answer it goes back to sleep.
+    # Say "hey jarvis" to activate.  The phrase must be at the beginning of a
+    # turn, so a song/video merely mentioning JARVIS cannot issue a device command.
+    # After a clarifying question, the next turn is answered WITHOUT the wake word
+    # for a short window; after a normal answer it goes back to sleep.
     wake_enabled: bool = _truthy(os.getenv("JARVIS_WAKE", "1"))
-    # Include common Whisper mishearings of "jarvis" (jairus/jarvus/jervis/javis) so
-    # the wake gate still fires when the STT slightly mistranscribes the name.
+    # Keep this deliberately narrow.  Phonetic aliases make ordinary background
+    # speech look like a wake word. Add a personal alias only if you accept that
+    # trade-off.
     wake_words: tuple[str, ...] = tuple(
         w.strip()
         for w in os.getenv(
-            "JARVIS_WAKE_WORDS", "jarvis,jairus,jarvus,jervis,javis"
+            "JARVIS_WAKE_WORDS", "jarvis"
         ).split(",")
         if w.strip()
     )
+    # Strict mode (default): require the explicit phrase "hey jarvis". Set 0 if
+    # you deliberately prefer the shorter "jarvis" prefix and have headphones or
+    # robust echo cancellation.
+    wake_require_hey: bool = _truthy(os.getenv("JARVIS_WAKE_REQUIRE_HEY", "1"))
+    # Strict activation (default ON): EVERY turn must begin with the wake word, so
+    # JARVIS never rides a "stay-awake" window into acting on ambient speech (you
+    # talking to someone else, background chatter). Set JARVIS_WAKE_STRICT=0 to
+    # restore the smart follow-up window (answer a clarifying question without the
+    # wake word) — only sensible with headphones / good echo cancellation.
+    wake_strict: bool = _truthy(os.getenv("JARVIS_WAKE_STRICT", "1"))
     wake_followup_seconds: float = float(os.getenv("JARVIS_WAKE_FOLLOWUP", "5"))
     # After a normal (non-question) answer, optionally stay awake briefly so
     # back-to-back commands work without repeating the wake word. OFF by default:
@@ -94,6 +110,20 @@ class Config:
     # turns while awake, which makes JARVIS re-run tools in a loop. Safe to enable
     # (e.g. 8) only with headphones/good echo cancellation.
     wake_continuation_seconds: float = float(os.getenv("JARVIS_WAKE_CONTINUATION", "0"))
+    # A silence longer than this starts a FRESH conversation: the running chat
+    # history is dropped so a command spoken minutes later can't be stitched onto an
+    # earlier "hey jarvis …" turn (which mis-primes the turn detector and can make
+    # JARVIS act on a stale request), and the wake word is required again. Set 0 to
+    # keep the whole session's history (not recommended for always-listening use).
+    conversation_gap_seconds: float = float(os.getenv("JARVIS_CONVO_GAP", "45"))
+
+    # ── Speaker verification (optional, local, fail-closed) ────────────
+    # When enabled, only speech matching the locally enrolled owner profile reaches
+    # STT/wake-word routing. Enrol first with: python -m jarvis.voice.enroll
+    voice_verify_enabled: bool = _truthy(os.getenv("JARVIS_VOICE_VERIFY", "0"))
+    voice_profile_path: str = os.path.expanduser(
+        os.getenv("JARVIS_VOICE_PROFILE", "~/.jarvis/voice/owner_siamese.pt")
+    )
 
     # ── Orchestrator / brain ───────────────────────────────────────────
     # "langgraph" (default): LangGraph react-agent brain + persistent memory.
@@ -171,6 +201,20 @@ class Config:
     # to the built-in defaults). Apps are only quit if the user lists them here.
     focus_block_sites: str = os.getenv("JARVIS_FOCUS_BLOCK_SITES", "")
     focus_block_apps: str = os.getenv("JARVIS_FOCUS_BLOCK_APPS", "")
+
+    # ── Reading mode ────────────────────────────────────────────────────
+    # "reading mode" sets a comfortable reading environment: warm tone (Night
+    # Shift), a dark low-glare background, softer brightness, and soft background
+    # music. Everything is saved and restored when reading mode ends.
+    reading_brightness: float = float(os.getenv("JARVIS_READING_BRIGHTNESS", "0.45"))  # 0.0–1.0
+    reading_volume: int = int(os.getenv("JARVIS_READING_VOLUME", "25"))  # system volume 0–100
+    reading_music_query: str = os.getenv(
+        "JARVIS_READING_MUSIC", "peaceful piano instrumental for reading"
+    )
+    reading_dark_mode: bool = _truthy(os.getenv("JARVIS_READING_DARK_MODE", "1"))
+    reading_night_shift: bool = _truthy(os.getenv("JARVIS_READING_NIGHT_SHIFT", "1"))
+    # Optional: a POSIX path to a calm wallpaper to switch to in reading mode.
+    reading_wallpaper: str = os.path.expanduser(os.getenv("JARVIS_READING_WALLPAPER", ""))
     # Local embedding model (kept for optional future use; memory no longer indexes).
     embed_model: str = os.getenv("JARVIS_EMBED_MODEL", "nomic-embed-text")
     embed_dims: int = int(os.getenv("JARVIS_EMBED_DIMS", "768"))  # nomic-embed-text = 768
@@ -230,6 +274,39 @@ class Config:
     # (Qwen2.5-VL via Ollama) — no third-party service. Needs: ollama pull qwen2.5vl:7b.
     captcha_enabled: bool = _truthy(os.getenv("JARVIS_BROWSER_CAPTCHA", "1"))
     captcha_model: str = os.getenv("JARVIS_CAPTCHA_MODEL", "qwen2.5vl:7b")
+
+    # ── Playwright-MCP web agent (autonomous navigation) ───────────────
+    # The reliable browser agent: an OpenAI Agents SDK loop drives the Playwright
+    # MCP server, reading each page's ACCESSIBILITY SNAPSHOT and clicking/typing by
+    # element ref — real structured control, not screenshot-guessing. Replaces the
+    # brittle browser-use path for interactive tasks.
+    pw_agent_enabled: bool = _truthy(os.getenv("JARVIS_PW_AGENT", "1"))
+    # Visible by default so you can watch it work; set 1 to hide.
+    pw_headless: bool = _truthy(os.getenv("JARVIS_PW_HEADLESS", "0"))
+    # Chrome channel (real Chrome, so your extensions/DRM behave closest to normal).
+    pw_browser_channel: str = os.getenv("JARVIS_PW_BROWSER", "chrome")
+    # A DEDICATED persistent profile (separate from your main Chrome so it never
+    # fights an already-open Chrome). Log in to sites here once; logins persist.
+    pw_user_data_dir: str = os.path.expanduser(
+        os.getenv("JARVIS_PW_USER_DATA_DIR", "~/.jarvis/pw-profile")
+    )
+    pw_viewport: str = os.getenv("JARVIS_PW_VIEWPORT", "1280x800")
+    # Vision handles canvas/custom controls and pdf reads PDFs directly; the normal
+    # accessibility snapshot remains the fast default for ordinary sites.
+    pw_caps: str = os.getenv("JARVIS_PW_CAPS", "vision,pdf")
+    # Keep Playwright artifacts (downloads, screenshots, traces) out of the source
+    # checkout; these may contain private site content.
+    pw_output_dir: str = os.path.expanduser(
+        os.getenv("JARVIS_PW_OUTPUT_DIR", "~/.jarvis/pw-output")
+    )
+    pw_action_timeout_ms: int = int(os.getenv("JARVIS_PW_ACTION_TIMEOUT_MS", "10000"))
+    pw_navigation_timeout_ms: int = int(os.getenv("JARVIS_PW_NAVIGATION_TIMEOUT_MS", "60000"))
+    # Max agent steps and overall wall-clock budget for one web task.
+    pw_max_turns: int = int(os.getenv("JARVIS_PW_MAX_TURNS", "40"))
+    pw_timeout: int = int(os.getenv("JARVIS_PW_TIMEOUT", "300"))
+    # Model that reasons over snapshots and drives the browser. A frontier model is
+    # far more reliable at this than local/oss models (verified). Uses OPENAI_API_KEY.
+    pw_model: str = os.getenv("JARVIS_PW_MODEL", os.getenv("JARVIS_BROWSER_FRONTIER_MODEL", "gpt-4.1-mini"))
 
     # ── Documents / assignments ────────────────────────────────────────
     # Preferred AI apps for "do the assignment", in order. The first AVAILABLE one

@@ -10,14 +10,19 @@ from __future__ import annotations
 
 import asyncio
 import random
+import re
 
-from agents import function_tool
+from agents import RunContextWrapper, function_tool
 
 from jarvis.browser_agent.client import run_browser_task
+from jarvis.browser_agent.pw_agent import run_web_task_and_report
+from jarvis.config import config as _config
 from jarvis.tools.browser import BrowserController, BrowserError
 from jarvis.tools.media import MediaController, MediaError
+from jarvis.tools.reading_mode import ReadingMode
 from jarvis.tools.screen import ScreenController, ScreenError
 from jarvis.tools.spotify import SpotifyController, SpotifyError
+from jarvis.tools.system_settings import SettingsError, SystemSettings
 from jarvis.tools.web import TavilyClient, WebError
 
 
@@ -219,6 +224,7 @@ def build_music_tools(*, spotify: SpotifyController, memory, search_mode: str = 
 def build_browser_tools(
     *, browser: BrowserController, memory, media: MediaController | None = None,
     announce=None, workspace=None, browser_agent_enabled: bool = True, focus=None,
+    tavily=None,
 ) -> list:
     def _blocked(target: str) -> str | None:
         """If focus mode is on and `target` is a distraction, the refusal line."""
@@ -229,14 +235,19 @@ def build_browser_tools(
 
     @function_tool
     async def open_site(name: str) -> str:
-        """Open a website or web app in Chrome by name (youtube, instagram, gmail,
-        github, netflix, …) or a URL. Unknown names are searched on Google."""
+        """Open a WEBSITE or web app in Chrome by name (youtube, instagram, gmail,
+        github, netflix, …) or a URL; unknown names are searched on Google. This is
+        for the WEB only — never use it to open the user's own files, documents,
+        notes, slides, PDFs or assignments stored on their computer (use
+        open_document for those)."""
         if (msg := _blocked(name)):
             return msg
         def _do():
-            res = browser.open_site(name)
+            browser.open_site(name)
             memory.log_activity(f"opened in browser: {name}")
-            return res
+            # Speak a short confirmation, NOT the raw URL/site name (the user can see
+            # the page open) — just enough to acknowledge the action.
+            return "Opening that now, sir."
         try:
             return await asyncio.to_thread(_do)
         except BrowserError as e:
@@ -251,6 +262,34 @@ def build_browser_tools(
         def _do():
             res = browser.play_youtube(query)
             memory.log_activity(f"watched on YouTube: {query}")
+            return res
+        try:
+            return await asyncio.to_thread(_do)
+        except BrowserError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def play_netflix(title: str) -> str:
+        """Play a specific show or movie on Netflix in the user's real, logged-in
+        Chrome (it opens the title and starts playing). Use for 'play <title> on
+        Netflix', 'put on <show>', 'watch <movie> on Netflix'. Pass just the title
+        as `title`. To open Netflix's home page instead (no specific title), use
+        open_site('netflix')."""
+        if (msg := _blocked("netflix")):
+            return msg
+        def _do():
+            # Resolve the title to its Netflix id via web search (reliable, no
+            # Netflix login/API); play_netflix falls back to the Netflix search
+            # page if we can't pin it confidently.
+            title_id = ""
+            if tavily is not None and getattr(tavily, "enabled", False):
+                try:
+                    urls = tavily.search_urls(f"{title} netflix")
+                    title_id = browser.netflix_id_from_urls(urls)
+                except Exception:
+                    title_id = ""
+            res = browser.play_netflix(title, title_id=title_id)
+            memory.log_activity(f"watched on Netflix: {title}")
             return res
         try:
             return await asyncio.to_thread(_do)
@@ -295,11 +334,21 @@ def build_browser_tools(
 
     @function_tool
     async def browser_task(instruction: str) -> str:
-        """Perform a multi-step task on a website that requires logging in,
-        navigating, searching, downloading files, or reading specific account
-        info (e.g. "download the OS study materials by Professor X from VTOP",
-        "check the balance on my AWS account", "find my latest Amazon order"). Do
-        NOT use this to merely open a website (use open_site)."""
+        """Autonomously DO a task on the web — JARVIS opens a real browser, reads the
+        page, and clicks/types its way through to the goal. Use for anything beyond
+        just opening a site: searching a site and opening a result, navigating through
+        pages/menus, logging in, filling and submitting forms, booking/ordering,
+        downloading files, or reading specific account info (e.g. "search Amazon for
+        an SSD and open the top result", "log into VTOP and download my OS notes",
+        "find and play the trailer for Dune on YouTube", "check my AWS balance"). Pass
+        the user's COMPLETE request as `instruction`; it runs in the background and
+        reports back. Do NOT use this to merely open a landing page (use open_site),
+        and NEVER use it to open the user's OWN files/documents/notes stored on their
+        computer (use open_document / open_documents) — this tool is for the web."""
+        if (msg := _blocked(instruction)):
+            return msg
+        if _config.pw_agent_enabled:
+            return await run_web_task_and_report(instruction, announce=announce)
         return await run_browser_task(instruction, announce=announce)
 
     @function_tool
@@ -351,29 +400,37 @@ def build_browser_tools(
             return f"error: {e}"
 
     @function_tool
-    async def close_tab() -> str:
-        """Close the current/active browser tab."""
+    async def close_tabs(match: str = "") -> str:
+        """Close tabs in the user's REAL, visible Chrome — the ONE tool for closing
+        tabs. Pass `match` to close every tab whose URL or title contains it: "close
+        my VTOP tabs" -> match='vtop', "close all youtube tabs" -> 'youtube', "close
+        the netflix tab" -> 'netflix'. Leave `match` empty to close only the current
+        active tab ("close this tab"). Use this for the user's OWN open tabs — never
+        browser_task (that's an isolated profile that has none of the tabs the user
+        can see)."""
         if media is None:
             return "I can't control the browser, sir"
         try:
+            if (match or "").strip():
+                return await asyncio.to_thread(media.close_tabs_matching, match)
             return await asyncio.to_thread(media.close_tab)
         except MediaError as e:
             return f"error: {e}"
 
-    tools = [open_site, play_youtube, latest_channel_video, open_reels, open_shorts]
+    tools = [open_site, play_youtube, play_netflix, latest_channel_video, open_reels, open_shorts]
     if browser_agent_enabled:
         tools.append(browser_task)
     if workspace is not None:
         tools += [download_and_explain, do_assignment, open_answer]
     if media is not None:
-        tools += [control_video, close_tab]
+        tools += [control_video, close_tabs]
     return tools
 
 
 # ── Screen vision ──────────────────────────────────────────────────────────
 def build_screen_tools(*, screen: ScreenController, memory, ui=None, rag=None) -> list:
     @function_tool
-    async def explain_screen(question: str = "", show_in_ui: bool = False) -> str:
+    async def explain_screen(question: str = "") -> str:
         """Take a screenshot of the user's screen and explain what's on it, in
         detail. This is the ONE tool for any request to look at / read / describe /
         explain the screen — including "take a screenshot AND tell me what's there",
@@ -381,20 +438,20 @@ def build_screen_tools(*, screen: ScreenController, memory, ui=None, rag=None) -
         "explain this formula", "what does this error mean". It captures the screen
         AND analyses it with the vision model, then returns the real description —
         so NEVER answer such a request from your own guess, and never use
-        take_screenshot for it. Pass the user's specific question as `question`
-        (empty = describe everything). Set show_in_ui=true when the user asks to
-        SHOW / OPEN / DISPLAY the explanation on the dashboard/UI/screen — it will
-        render the captured screen and the full analysis on the HUD. Return the
-        explanation to the user in full — do not shorten it."""
+        take_screenshot for it. The captured screenshot and the full analysis are
+        always shown on the HUD dashboard automatically. Pass the user's specific
+        question as `question` (empty = describe everything). Return the explanation
+        to the user in full — do not shorten it."""
         def _do():
-            if show_in_ui and ui is not None:
-                ans, img = screen.analyse(question)
+            # Always analyse (not plain explain) so the captured screenshot is on
+            # hand, and always surface it on the HUD — a screen explanation the user
+            # can't see defeats the point.
+            ans, img = screen.analyse(question)
+            if ui is not None:
                 ui.show_explanation(
                     title=question.strip()[:60] or "Screen analysis",
                     body=ans, image_b64=img, source=f"screen vision · {screen.model}",
                 )
-            else:
-                ans = screen.explain(question)
             memory.log_activity("explained the user's screen")
             return ans
         try:
@@ -420,20 +477,26 @@ def build_screen_tools(*, screen: ScreenController, memory, ui=None, rag=None) -
 
     if rag is not None:
         @function_tool
-        async def explain_this(question: str = "", show_in_ui: bool = False) -> str:
+        async def explain_this(question: str = "", document: str = "") -> str:
             """Explain the topic in the document the user is CURRENTLY looking at on
             screen. Use for "explain this topic I don't understand", "explain this
             slide", "what does this section mean", "I'm stuck on this page" — when the
             user refers to something in a document open in front of them rather than
-            asking a standalone question. JARVIS finds which of the open documents is
-            live on screen, works out the page/slide and subtopic, then reads the
-            pages ABOVE and BELOW that subtopic from the indexed file (not just what's
-            visible) and explains it. Falls back to plain screen vision if the file
-            isn't indexed. Set show_in_ui=true to also render it on the HUD."""
+            asking a standalone question. If the user NAMED the document or just opened
+            one ("explain that document", "explain the Kalman notes"), pass its
+            name/description as `document` so it's read from the indexed content even
+            if it can't be pinned on screen. JARVIS finds which document is live, works
+            out the page/slide and subtopic, then reads the pages ABOVE and BELOW that
+            subtopic from the indexed file (not just what's visible) and explains it.
+            Falls back to plain screen vision if the file isn't indexed. The screenshot
+            and explanation are shown on the HUD automatically."""
             def _do():
                 # 1) Look at the screen: which document, page/slide, subtopic, snippet.
+                #    A name the user gave (or a doc just opened) takes priority over the
+                #    screen guess, so "explain that document" works without a clean
+                #    screenshot.
                 ctx = screen.read_screen_context(question)
-                name_hint = ctx.get("document") or ctx.get("window_title") or ""
+                name_hint = document or ctx.get("document") or ctx.get("window_title") or ""
                 # 2) Explain from the indexed document, expanding across pages.
                 result = rag.explain_topic(
                     question,
@@ -452,7 +515,7 @@ def build_screen_tools(*, screen: ScreenController, memory, ui=None, rag=None) -
                     cite = f"document · {result.get('cite') or result.get('document','')}"
                     title = (question.strip()[:60] or result.get("subtopic")
                              or f"{result.get('document','Document')} explained")
-                if show_in_ui and ui is not None:
+                if ui is not None:
                     ui.show_explanation(title=title, body=ans, image_b64=img, source=cite)
                 memory.log_activity("explained a topic in the on-screen document")
                 return ans
@@ -461,7 +524,55 @@ def build_screen_tools(*, screen: ScreenController, memory, ui=None, rag=None) -
             except ScreenError as e:
                 return f"error: {e}"
 
+        @function_tool
+        async def summarize_this(section_only: bool = False) -> str:
+            """Summarise the document the user is CURRENTLY looking at on screen. Use
+            for "summarise the document in front of me", "give me the gist of this",
+            "summarise what I'm reading", "sum up this paper" — when the user refers
+            to a document open in front of them WITHOUT naming it. JARVIS looks at the
+            screen to identify which of the open documents is live, resolves it in the
+            index, and summarises it by pulling the right chunks from the whole file
+            (not just the visible part). Set section_only=true to summarise ONLY the
+            section / slide / page currently on screen ("summarise this section",
+            "sum up this slide"). Falls back to plain screen vision if the file isn't
+            indexed. The screenshot and summary are shown on the HUD automatically.
+            When the user names the document instead, use summarize_document."""
+            def _do():
+                # Identify the live document from the screen (name, page, snippet).
+                ctx = screen.read_screen_context("")
+                name_hint = ctx.get("document") or ctx.get("window_title") or ""
+                result = rag.summarize_located(
+                    document=name_hint,
+                    locator_text=ctx.get("snippet", ""),
+                    page=ctx.get("page", 0) or 0,
+                    section_only=section_only,
+                )
+                if result is None:
+                    # not indexed / couldn't resolve → summarise from screen vision
+                    ans, img = screen.analyse(
+                        "Summarise the document shown here — the main points and key "
+                        "conclusions."
+                    )
+                    cite = f"screen vision · {screen.model}"
+                    title = "On-screen summary"
+                else:
+                    ans = result["answer"]
+                    img = ctx.get("image_b64", "")
+                    cite = f"document · {result.get('cite') or result.get('document','')}"
+                    scope = result.get("subtopic") or ("section" if section_only else "")
+                    title = (f"{result.get('document', 'Document')} — {scope}".strip(" —")
+                             or "Document summary")
+                if ui is not None:
+                    ui.show_explanation(title=title, body=ans, image_b64=img, source=cite)
+                memory.log_activity("summarised the on-screen document")
+                return ans
+            try:
+                return await asyncio.to_thread(_do)
+            except ScreenError as e:
+                return f"error: {e}"
+
         tools.append(explain_this)
+        tools.append(summarize_this)
 
     return tools
 
@@ -584,6 +695,15 @@ def build_planner_tools(*, scheduler, memory=None) -> list:
     ]
 
 
+# "open ALL / every / both / multiple … docs" — a plural-open intent the model often
+# drops when it fills in a tool argument, so tools recover it from the raw utterance.
+_ALL_INTENT = re.compile(r"\b(all|every|each|both|multiple|several)\b", re.I)
+
+
+def _wants_all(text: str) -> bool:
+    return bool(_ALL_INTENT.search(text or ""))
+
+
 # ── Files & documents: RAG Q&A + sandboxed organise / move / copy / open ────
 def build_files_tools(*, rag=None, organizer=None, memory=None) -> list:
     from jarvis.files.organizer import FileError
@@ -619,6 +739,21 @@ def build_files_tools(*, rag=None, organizer=None, memory=None) -> list:
             return await asyncio.to_thread(_do)
 
         @function_tool
+        async def review_document(document: str, focus: str = "") -> str:
+            """Review/critique ONE of the user's own documents and suggest concrete
+            improvements — "review my essay", "what can I improve in my resume", "give
+            feedback on my SOP". `document` is a free-text description (no exact
+            filename needed); `focus` optionally narrows the critique ("clarity", "the
+            experience section"). For MULTIPLE documents ("both my resumes"), call this
+            once PER document and then combine the feedback into one reply."""
+            def _do():
+                out = rag.review(document, focus=focus)
+                if memory is not None:
+                    memory.log_activity(f"reviewed document: {document}")
+                return out
+            return await asyncio.to_thread(_do)
+
+        @function_tool
         async def reindex_documents() -> str:
             """Rescan the user's folders and update the document index (add new
             files, refresh changed ones, drop deleted ones). Use for "reindex my
@@ -627,20 +762,33 @@ def build_files_tools(*, rag=None, organizer=None, memory=None) -> list:
             return (f"Index updated, sir: {s['added']} added, {s['updated']} refreshed, "
                     f"{s['removed']} removed ({s['unchanged']} unchanged).")
 
-        tools += [ask_documents, summarize_document, reindex_documents]
+        tools += [ask_documents, summarize_document, review_document, reindex_documents]
 
     # opening/locating a document by DESCRIPTION needs both the index (to resolve
     # the right file) and the organiser (to open it in its default app).
     if rag is not None and organizer is not None:
         @function_tool
-        async def open_document(description: str) -> str:
+        async def open_document(ctx: RunContextWrapper, description: str) -> str:
             """Open a document by DESCRIPTION — no exact filename needed. Resolves
             the best-matching indexed file from a phrase like "open my machine
             learning assignment", "open the OS notes I downloaded", "pull up the
             resume I was editing", then opens it in its default app. If several files
             match closely it will read back the top few and ASK which one — the user
-            can then reply with a name or a bit more detail and you call this again."""
+            can then reply with a name or a bit more detail and you call this again.
+            If the user asks for ALL / EVERY / multiple documents on a topic ("open
+            all my … docs/notes on <X>"), prefer open_documents."""
+            user_text = getattr(getattr(ctx, "context", None), "user_text", "") or ""
             def _do():
+                # Recover a plural-open intent the model dropped: "open ALL my X docs"
+                # reaches here as description="X". Open the whole related set instead.
+                if _wants_all(user_text):
+                    related = rag.related_documents(description)
+                    if not related:
+                        return f"I couldn't find any documents related to “{description}”, sir."
+                    organizer.open_paths([d["source"] for d in related])
+                    names = ", ".join(d["filename"] for d in related)
+                    n = len(related)
+                    return f"Opened {n} document{'s' if n != 1 else ''} on {description}, sir: {names}."
                 ranked = rag.rank_documents(description)
                 if not ranked:
                     return f"I couldn't find a document matching “{description}”, sir."
@@ -659,6 +807,29 @@ def build_files_tools(*, rag=None, organizer=None, memory=None) -> list:
                 return await asyncio.to_thread(_do)
             except (SandboxError, OSError) as e:
                 return f"I couldn't open that, sir: {e}"
+
+        @function_tool
+        async def open_documents(topic: str) -> str:
+            """Open ALL of the user's OWN documents related to a topic, at once — use
+            whenever they say "open ALL / every / my … docs/notes/files on <topic>"
+            ("open all my disaster management notes", "open everything about natural
+            disasters", "pull up all my OS module PDFs"). It resolves every
+            clearly-related indexed file, opens them in their default apps, and reads
+            back what it opened. For ONE specific document use open_document instead.
+            NEVER use browser_task/open_site for this — these are the user's local
+            files, not the web."""
+            def _do():
+                related = rag.related_documents(topic)
+                if not related:
+                    return f"I couldn't find any documents related to “{topic}”, sir."
+                organizer.open_paths([d["source"] for d in related])
+                names = ", ".join(d["filename"] for d in related)
+                n = len(related)
+                return (f"Opened {n} document{'s' if n != 1 else ''} on {topic}, sir: {names}.")
+            try:
+                return await asyncio.to_thread(_do)
+            except (SandboxError, OSError) as e:
+                return f"I couldn't open those, sir: {e}"
 
         @function_tool
         async def find_document(description: str) -> str:
@@ -682,7 +853,7 @@ def build_files_tools(*, rag=None, organizer=None, memory=None) -> list:
                 return ", ".join(bits) + "."
             return await asyncio.to_thread(_do)
 
-        tools += [open_document, find_document]
+        tools += [open_document, open_documents, find_document]
 
     if organizer is not None:
         @function_tool
@@ -723,7 +894,10 @@ def build_files_tools(*, rag=None, organizer=None, memory=None) -> list:
 
         @function_tool
         async def open_file(path: str) -> str:
-            """Open a specific file or folder in its default app. Use for "open X"."""
+            """Open a file or folder in its default app when you already have its
+            EXACT path. For opening one of the user's documents BY DESCRIPTION ("open
+            my resume", "open the OS notes") use open_document instead — it resolves
+            the right file for you."""
             try:
                 return await asyncio.to_thread(organizer.open_paths, [path])
             except (SandboxError, OSError) as e:
@@ -898,3 +1072,125 @@ def build_triage_tools(*, tavily: TavilyClient, memory) -> list:
         return await asyncio.to_thread(memory.recall_text)
 
     return [web_search, remember, forget, recall_about_me]
+
+
+# ── System settings (the Mac's own brightness & sound) ────────────────────
+def build_system_tools(*, system: SystemSettings, memory=None) -> list:
+    def _log(msg: str) -> None:
+        if memory is not None:
+            memory.log_activity(msg)
+
+    @function_tool
+    async def set_brightness(percent: int) -> str:
+        """Set the LAPTOP SCREEN brightness to a percentage, 0–100 ('brightness to
+        40%', 'dim the screen to 20', 'brightness max'). This is the Mac's DISPLAY
+        brightness, not a video's."""
+        def _do():
+            frac = system.set_brightness(max(0, min(100, percent)) / 100.0)
+            _log(f"set screen brightness to {percent}%")
+            return f"screen brightness set to {round(frac * 100)}%"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def change_brightness(up: bool) -> str:
+        """Nudge the LAPTOP SCREEN brightness up or down a step ('brighter',
+        'dimmer', 'turn the screen up/down')."""
+        def _do():
+            frac = system.nudge_brightness(up)
+            _log(f"turned screen brightness {'up' if up else 'down'}")
+            if frac is None:
+                return f"screen a bit {'brighter' if up else 'dimmer'}"
+            return f"screen brightness {'up' if up else 'down'} to {round(frac * 100)}%"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def set_system_volume(percent: int) -> str:
+        """Set the LAPTOP's system output volume to a percentage, 0–100 ('volume to
+        30', 'set the sound to 50%'). This is the Mac's overall sound, NOT the
+        Spotify app's own volume."""
+        def _do():
+            level = system.set_volume(max(0, min(100, percent)))
+            _log(f"set system volume to {level}%")
+            return f"system volume set to {level}%"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def change_system_volume(up: bool) -> str:
+        """Nudge the LAPTOP's system output volume up or down ('turn it up/down',
+        'louder'/'quieter' when they mean the whole computer, not just music)."""
+        def _do():
+            level = system.nudge_volume(up)
+            _log(f"turned system volume {'up' if up else 'down'}")
+            return f"system volume {'up' if up else 'down'} to {level}%"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def mute_system(muted: bool) -> str:
+        """Mute (muted=true) or unmute (muted=false) the LAPTOP's sound entirely."""
+        def _do():
+            system.set_muted(muted)
+            _log(f"{'muted' if muted else 'unmuted'} the system")
+            return "muted" if muted else "unmuted"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    @function_tool
+    async def set_dark_mode(on: bool) -> str:
+        """Turn the Mac's Dark Mode on (on=true) or off (on=false) — 'dark mode',
+        'light mode', 'switch to dark/light appearance'."""
+        def _do():
+            system.set_dark_mode(on)
+            _log(f"set dark mode {'on' if on else 'off'}")
+            return f"dark mode {'on' if on else 'off'}"
+        try:
+            return await asyncio.to_thread(_do)
+        except SettingsError as e:
+            return f"error: {e}"
+
+    return [set_brightness, change_brightness, set_system_volume,
+            change_system_volume, mute_system, set_dark_mode]
+
+
+# ── Reading mode (an ergonomic reading environment) ───────────────────────
+def build_reading_tools(*, reading: ReadingMode, memory=None) -> list:
+    @function_tool
+    async def start_reading_mode(music: str = "") -> str:
+        """Turn on READING MODE: a comfortable reading setup — warm tone + dark,
+        low-glare background + softer brightness, with soft instrumental music on
+        Spotify in the background. Use for 'reading mode', 'set up for reading',
+        'I'm going to read'. Pass `music` only if the user asks for specific
+        background music; otherwise leave it empty for the default calm mix."""
+        def _do():
+            msg = reading.start(music)
+            if memory is not None:
+                memory.log_activity("started reading mode")
+            return msg
+        return await asyncio.to_thread(_do)
+
+    @function_tool
+    async def stop_reading_mode() -> str:
+        """Turn OFF reading mode and restore the previous brightness, volume,
+        appearance and Night Shift. Use for 'stop reading mode', 'exit reading
+        mode', 'I'm done reading'."""
+        def _do():
+            msg = reading.stop()
+            if memory is not None:
+                memory.log_activity("stopped reading mode")
+            return msg
+        return await asyncio.to_thread(_do)
+
+    return [start_reading_mode, stop_reading_mode]

@@ -209,6 +209,40 @@ def test_resolve_document_by_filename_words(tmp_path):
     assert doc["source"] == str(docs / "machine_learning_assignment.txt")
 
 
+def test_resolve_document_prefers_exact_filename(tmp_path):
+    # a caller that already knows the file (e.g. reviewing a doc it just opened) must
+    # match it exactly, not get fuzzy-ranked onto a semantically noisier neighbour.
+    rag, _, _ = _index_docs(tmp_path, {
+        "Jake_s_Resume.txt": "brief resume",
+        "Syllabus.txt": "course syllabus resume-building workshop pdf notes",
+    })
+    # bias the fuzzy ranker toward Syllabus, then confirm the exact name still wins
+    rag.rank_documents = lambda desc, k=12: [
+        {"source": "x", "filename": "Syllabus.txt", "score": 9.0},
+        {"source": "y", "filename": "Jake_s_Resume.txt", "score": 0.1},
+    ]
+    doc = rag.resolve_document("Jake_s_Resume.txt")
+    assert doc and doc["filename"] == "Jake_s_Resume.txt"           # exact name, not Syllabus
+    assert rag.resolve_document("Jake_s_Resume")["filename"] == "Jake_s_Resume.txt"  # stem too
+
+
+def test_related_documents_filename_match_beats_semantic_noise(tmp_path):
+    # "resume" → the files whose NAME says resume, even if fuzzy content search buries
+    # them under unrelated docs that happen to score higher.
+    rag, _, _ = _index_docs(tmp_path, {
+        "Jake_s_Resume.txt": "a",
+        "my_resume.txt": "b",
+        "lab_submission.txt": "c",
+    })
+    rag.rank_documents = lambda desc, k=40: [
+        {"source": "l", "filename": "lab_submission.txt", "score": 9.0},   # semantic noise
+        {"source": "j", "filename": "Jake_s_Resume.txt", "score": 1.5},
+        {"source": "m", "filename": "my_resume.txt", "score": 1.4},
+    ]
+    names = {d["filename"] for d in rag.related_documents("resumes")}       # plural query
+    assert names == {"Jake_s_Resume.txt", "my_resume.txt"}                  # noise excluded
+
+
 def test_chunks_for_page_targeting(tmp_path):
     store = VectorStore(str(tmp_path / "idx"), dim=8, embed_key="fake:test")
     emb = FakeEmbedder()
@@ -233,6 +267,28 @@ def test_rank_documents_orders_and_scores(tmp_path):
     assert ranked[0]["filename"] == "neural_networks.txt"
     assert all("score" in d for d in ranked)
     assert ranked[0]["score"] >= ranked[-1]["score"]
+
+
+def test_related_documents_keeps_cluster_drops_noise(tmp_path):
+    # the "open all docs on X" set: keep the top plus its close cluster, drop weak
+    # keyword-only noise (below the absolute floor).
+    rag, _, _ = _index_docs(tmp_path, {"a.txt": "anything"})
+    ranked = [
+        {"source": "top.pdf", "filename": "top.pdf", "score": 16.0},
+        {"source": "b.pdf", "filename": "b.pdf", "score": 3.5},
+        {"source": "c.pdf", "filename": "c.pdf", "score": 2.2},
+        {"source": "noise.pdf", "filename": "noise.pdf", "score": 0.75},  # below floor
+    ]
+    rag.rank_documents = lambda desc, k=40: ranked
+    rel = rag.related_documents("disaster")
+    assert [d["filename"] for d in rel] == ["top.pdf", "b.pdf", "c.pdf"]
+
+
+def test_related_documents_never_empty_when_there_is_a_hit(tmp_path):
+    rag, _, _ = _index_docs(tmp_path, {"a.txt": "anything"})
+    # even a single weak match (below the floor) is returned rather than nothing.
+    rag.rank_documents = lambda desc, k=40: [{"source": "only.pdf", "filename": "only.pdf", "score": 0.4}]
+    assert [d["filename"] for d in rag.related_documents("weak")] == ["only.pdf"]
 
 
 def test_context_window_spans_pages_and_section(tmp_path):
@@ -274,3 +330,53 @@ def test_explain_topic_falls_back_when_onscreen_doc_not_indexed(tmp_path, monkey
     # the live document's title matches NO indexed file → None, so the caller falls
     # back to plain screen vision instead of explaining the wrong file
     assert rag.explain_topic("x", document="quantum chemistry lab report", locator_text="q") is None
+
+
+# ── summarising the document the user is looking at on screen ─────────────────
+def test_summarize_located_whole_document(tmp_path, monkeypatch):
+    rag, _, _ = _index_docs(tmp_path, {"os_notes.txt": "paging and virtual memory basics"})
+    monkeypatch.setattr(rag, "_complete", lambda *a, **k: "The notes cover paging.")
+    out = rag.summarize_located(document="os notes")
+    assert out is not None and out["document"] == "os_notes.txt"
+    assert "The notes cover paging." in out["answer"] and "os_notes.txt" in out["answer"]
+    # whole-document scope → no page/subtopic narrowing
+    assert out["page"] == 0 and out["subtopic"] == ""
+
+
+def test_summarize_located_section_only_narrows_to_onscreen_subtopic(tmp_path, monkeypatch):
+    store = VectorStore(str(tmp_path / "idx"), dim=8, embed_key="fake:test")
+    emb = FakeEmbedder()
+    secs = [
+        Section("Page 1", "intro material", page=1),
+        Section("Entropy", "entropy definition part one", page=2),
+        Section("Entropy", "entropy worked example continues", page=3),
+        Section("Entropy", "entropy summary and takeaways", page=4),
+    ]
+    chunks = chunk_sections(tmp_path / "thermo.pdf", secs)
+    store.add_document(str(tmp_path / "thermo.pdf"), hash="h", mtime=1, size=1,
+                       chunks=chunks, vectors=emb.embed([c.text for c in chunks]))
+    rag = RAGPipeline(store, emb, answer_model="x")
+
+    captured = {}
+
+    def _fake_complete(prompt, **kwargs):
+        captured["p"] = prompt
+        return "Entropy summarised."
+
+    monkeypatch.setattr(rag, "_complete", _fake_complete)
+    out = rag.summarize_located(document="thermo", locator_text="entropy worked example",
+                                page=3, section_only=True)
+    assert out is not None
+    assert out["subtopic"] == "Entropy" and out["page"] == 3
+    # the located subtopic's content reached the model
+    assert "entropy" in captured["p"].lower()
+
+
+def test_summarize_located_falls_back_when_doc_not_indexed(tmp_path, monkeypatch):
+    rag, _, _ = _index_docs(tmp_path, {"operating_systems.txt": "paging virtual memory"})
+    monkeypatch.setattr(rag, "_complete", lambda *a, **k: "ok")
+    # on-screen title matches the indexed file → summarises from the document
+    assert rag.summarize_located(document="operating systems") is not None
+    # unrelated on-screen title matches NO indexed file → None, so the caller falls
+    # back to plain screen vision instead of summarising the wrong file
+    assert rag.summarize_located(document="quantum chemistry lab report") is None

@@ -67,3 +67,27 @@ class TavilyClient:
         return f"{title}: {snippet}"[:400] if title or snippet else (
             f"I found nothing useful on the web for '{query}'."
         )
+
+    def search_urls(self, query: str, max_results: int = 6) -> list[str]:
+        """Return the result URLs for `query`, best match first. Used to resolve a
+        thing to its canonical page (e.g. a Netflix title's page). Raises WebError
+        the same way `search` does."""
+        if not (query or "").strip():
+            raise WebError("empty search query")
+        if not self.enabled:
+            raise WebError("Web search needs a Tavily API key — set TAVILY_API_KEY in your .env.")
+        payload = {
+            "api_key": self._api_key,
+            "query": query,
+            "topic": "general",
+            "search_depth": "basic",
+            "include_answer": False,
+            "max_results": max_results,
+        }
+        try:
+            resp = requests.post(_SEARCH_URL, json=payload, timeout=20)
+        except requests.RequestException as e:
+            raise WebError(f"web search failed: {e}") from e
+        if resp.status_code != 200:
+            raise WebError(f"web search failed ({resp.status_code}): {resp.text[:120]}")
+        return [r.get("url", "") for r in (resp.json().get("results") or []) if r.get("url")]

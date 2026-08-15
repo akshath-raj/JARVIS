@@ -57,6 +57,28 @@ def test_reveal_and_events_are_incremental(tmp_path):
     assert st2["feed"][-1]["text"] == "x = -b/2a"
 
 
+def test_controller_add_and_delete_memory(tmp_path):
+    from jarvis.graph.memory import MemoryStore
+
+    store = MemoryStore(str(tmp_path / "mem"))
+    ui = UIController(user="Akshath", memory=store)
+
+    assert ui.add_memory("favourite playlist is Knight") is True
+    assert ui.add_memory("   ") is False                 # blank rejected
+    assert store.all() == ["favourite playlist is Knight"]
+    assert ui.state(0)["memories"] == ["favourite playlist is Knight"]
+
+    assert ui.delete_memory("favourite playlist is Knight") is True
+    assert ui.delete_memory("was never here") is False
+    assert store.all() == []
+
+
+def test_controller_memory_edits_safe_without_store():
+    ui = UIController(user="Akshath")                    # no memory backend
+    assert ui.add_memory("x") is False
+    assert ui.delete_memory("x") is False
+
+
 def test_qa_turns_build_the_feed_and_dedupe_explanation(tmp_path):
     ui = _ctrl(tmp_path)
     ui.add_turn("user", "what's the capital of France?")

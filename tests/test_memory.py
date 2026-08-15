@@ -6,7 +6,7 @@ A FakeModel stands in for the summarizer so these tests stay fully offline.
 """
 from __future__ import annotations
 
-from jarvis.graph.memory import MemoryStore
+from jarvis.graph.memory import MemoryStore, is_utility_command
 
 
 class _FakeSummarizer:
@@ -93,6 +93,46 @@ def test_summarize_updates_profile_and_clears_log(tmp_path):
     assert m.summarize_now() is True
     assert set(m.all()) == {"likes sushi", "lives in Bangalore"}  # distilled into profile
     assert m._log_count() == 0                                    # consumed log cleared
+
+
+def test_remove_exact(tmp_path):
+    m = _mem(tmp_path)
+    m.remember("favourite playlist is Knight")
+    m.remember("prefers dark mode")
+    assert m.remove_exact("favourite playlist is Knight") is True
+    assert m.all() == ["prefers dark mode"]
+    # normalised match (case/whitespace) still deletes; a miss returns False
+    assert m.remove_exact("PREFERS   dark mode") is True
+    assert m.remove_exact("never stored this") is False
+    assert m.all() == []
+
+
+# ── woken-command learning: control commands are NOT preferences ──────────────
+def test_is_utility_command_classifies_control_vs_content():
+    # pure control/transport commands → utility (never learned)
+    for c in ["volume up", "increase volume", "turn it down", "louder", "mute",
+              "pause", "resume", "stop", "next", "previous track", "skip",
+              "rewind", "brightness up", "fullscreen", "play", "next song"]:
+        assert is_utility_command(c) is True, c
+    # content-bearing commands → NOT utility (these carry preference signal)
+    for c in ["play my knight playlist", "play some drum and bass",
+              "open youtube", "put on lofi beats", "search for pasta recipes",
+              "play taylor swift"]:
+        assert is_utility_command(c) is False, c
+
+
+def test_log_command_skips_utility_keeps_content(tmp_path):
+    m = _mem(tmp_path)
+    # the user's example: volume is used constantly but says nothing about them
+    m.log_command("increase volume")
+    m.log_command("volume down")
+    m.log_command("pause")
+    assert m._log_count() == 0                     # no control command was logged
+    # but a repeated content choice IS captured for the summarizer to learn from
+    m.log_command("play my knight playlist")
+    m.log_command("play my knight playlist")
+    details = [e["detail"] for e in m._read_log()]
+    assert details == ["play my knight playlist", "play my knight playlist"]
 
 
 def test_summarize_preserves_entries_logged_during_run(tmp_path):

@@ -68,10 +68,50 @@ function renderProfile(state) {
   }
   state.memories.forEach((m, idx) => {
     const li = document.createElement("li");
-    li.textContent = m;
     li.style.animationDelay = `${idx * 0.05}s`;
+    const span = document.createElement("span");
+    span.className = "mem-text";
+    span.textContent = m;
+    const del = document.createElement("button");
+    del.className = "mem-del";
+    del.title = "Delete memory";
+    del.textContent = "×";
+    del.addEventListener("click", () => deleteMemory(m));
+    li.appendChild(span);
+    li.appendChild(del);
     list.appendChild(li);
   });
+}
+
+async function addMemory(text) {
+  text = (text || "").trim();
+  if (!text) return;
+  try {
+    const r = await fetch("/api/memory/add", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const data = await r.json();
+    if (data && data.memories) applyMemories(data.memories);
+  } catch (_) {}
+}
+
+async function deleteMemory(text) {
+  try {
+    const r = await fetch("/api/memory/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const data = await r.json();
+    if (data && data.memories) applyMemories(data.memories);
+  } catch (_) {}
+}
+
+// Re-render the memory list immediately after an add/delete, without waiting for
+// the next 3s snapshot. `lastState` keeps the rest of the panel in sync.
+function applyMemories(memories) {
+  lastMemSig = null;            // force renderProfile to redraw the memory list
+  if (lastState) { lastState.memories = memories; renderProfile(lastState); }
 }
 
 function fmtWhen(ts) {
@@ -348,6 +388,19 @@ function connect() {
   ws.onclose = () => { ws = null; setTimeout(connect, backoff); backoff = Math.min(backoff * 1.6, 4000); };
   ws.onerror = () => { try { ws.close(); } catch (_) {} };
 }
+
+// memory add form
+(() => {
+  const form = $("mem-add-form");
+  if (!form) return;
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const input = $("mem-add-input");
+    const text = input.value;
+    input.value = "";
+    addMemory(text);
+  });
+})();
 
 // initial render via a one-shot fetch (so the page isn't blank before the first
 // snapshot arrives), then live over the socket.

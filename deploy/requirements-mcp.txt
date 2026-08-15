@@ -1,0 +1,12 @@
+# Slim dependency set for the JARVIS MCP server (deploy/Dockerfile).
+# Deliberately excludes the voice stack (livekit, torch, whisper, kokoro, agents SDK)
+# — the MCP server is just the tools, so the image stays small and cloud-friendly.
+mcp>=2.0.0
+requests>=2.31
+python-dotenv>=1.0
+numpy>=1.26
+openai>=1.40            # document RAG embeddings/answers + Spotify token exchange
+# Document parsing for the RAG tools (ask/summarize/review/find documents):
+pypdf>=4.2
+python-docx>=1.1
+python-pptx>=0.6.23

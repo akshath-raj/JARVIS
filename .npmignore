@@ -1,0 +1,4 @@
+# Strip Python bytecode caches from the published package
+**/__pycache__/
+*.pyc
+*.pyo

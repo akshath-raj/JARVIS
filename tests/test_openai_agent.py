@@ -150,7 +150,7 @@ def test_agent_has_all_domain_tools():
     names = {t.name for t in agent.tools}
     # music + browser + screen + web/memory all live on the one agent
     assert {"play_song", "pause_music", "change_volume", "recently_played"} <= names
-    assert {"open_site", "play_youtube", "control_video"} <= names
+    assert {"open_site", "play_youtube", "play_netflix", "control_video"} <= names
     assert {"explain_screen", "take_screenshot"} <= names
     assert {"web_search", "remember", "forget", "recall_about_me"} <= names
 
@@ -181,6 +181,23 @@ def test_explain_this_present_with_rag_and_is_document_aware():
     assert "explain_this" not in without
 
 
+def test_summarize_this_present_with_rag_and_summarises_onscreen_doc():
+    """With a document index, JARVIS gains summarize_this: it identifies the live
+    on-screen document and summarises it without the user naming the file."""
+    from jarvis.openai_agent.tools import build_screen_tools
+
+    with_rag = {t.name: t for t in
+                build_screen_tools(screen=object(), memory=_FakeMemory(), rag=object())}
+    assert "summarize_this" in with_rag
+    d = (with_rag["summarize_this"].description or "").lower()
+    assert "summar" in d and ("screen" in d or "in front of me" in d)
+    # section_only lets the user scope it to just the visible section/slide/page
+    assert "section_only" in with_rag["summarize_this"].params_json_schema.get("properties", {})
+    # no index → no summarize_this (nothing to summarise from)
+    without = {t.name for t in build_screen_tools(screen=object(), memory=_FakeMemory())}
+    assert "summarize_this" not in without
+
+
 def test_browser_task_registered():
     """The multi-step browser task tool is present (no separate streaming tool)."""
     from jarvis.openai_agent.tools import build_browser_tools
@@ -196,7 +213,47 @@ def test_files_tools_open_and_find_by_description():
 
     names = {t.name for t in
              build_files_tools(rag=object(), organizer=object(), memory=_FakeMemory())}
-    assert {"open_document", "find_document", "summarize_document", "ask_documents"} <= names
+    assert {"open_document", "open_documents", "find_document",
+            "summarize_document", "review_document", "ask_documents"} <= names
+
+
+def test_review_keeps_loop_open_and_open_plus_analysis_continues():
+    """review_document is an info tool (chains for multi-doc feedback); and opening a
+    doc keeps the loop open when the same request also asks to review/explain it."""
+    from agents.agent import ToolsToFinalOutputResult
+
+    from jarvis.openai_agent.brain import _tool_final_policy
+
+    class _R:
+        def __init__(self, name, output="x"):
+            self.tool = type("T", (), {"name": name})()
+            self.output = output
+
+    class _Ctx:
+        def __init__(self, ut):
+            self.context = type("C", (), {"user_text": ut})()
+
+    # a review chains (not final) so multiple docs' feedback can be combined
+    assert _tool_final_policy(_Ctx(""), [_R("review_document")]).is_final_output is False
+    # open + "suggest improvements" in the request → keep going (read then synthesise)
+    r = _tool_final_policy(_Ctx("open both my resumes and suggest improvements"),
+                           [_R("open_document")])
+    assert r.is_final_output is False
+    # a plain open with no analysis intent still stops on the action (one round-trip)
+    r2 = _tool_final_policy(_Ctx("open my resume"), [_R("open_document", "Opening it, sir.")])
+    assert r2.is_final_output and r2.final_output == "Opening it, sir."
+
+
+def test_all_intent_detection_for_plural_open():
+    """"open ALL/every/multiple … docs" is recognised, plain singular is not — this is
+    how open_document recovers a plural intent the model dropped from its argument."""
+    from jarvis.openai_agent.tools import _wants_all
+
+    assert _wants_all("open all the documents related to natural disaster")
+    assert _wants_all("open every disaster management pdf")
+    assert _wants_all("pull up both my resumes")
+    assert not _wants_all("open my speaker recognition notes")
+    assert not _wants_all("open the overall summary")  # 'overall' must not trip 'all'
 
 
 # ── Adapter (chat context → agents input) ───────────────────────────────────
@@ -234,6 +291,55 @@ def test_clean_strips_leaked_tool_json_and_harmony_tokens():
     assert _clean("<|start|>assistant<|channel|>final<|message|>Paused, sir.<|end|>") == "Paused, sir."
     assert _clean("Done <tool_call>{\"tool\":\"pause_music\"}</tool_call> paused, sir.") \
         == "Done paused, sir."
+    # harmony tool-ROUTING syntax (function names) is stripped, prose kept — both the
+    # full channel form and a bare leaked "functions.<name>" token.
+    assert _clean("<|channel|>commentary to=functions.play_song<|message|>Now playing, sir.") \
+        == "Now playing, sir."
+    assert _clean("functions.change_volume Volume up, sir.").strip() == "Volume up, sir."
     # legitimate prose (a real word, a brace literal) is left alone
     assert _clean("I have no commentary on that, sir.") == "I have no commentary on that, sir."
     assert _clean("Kept {a literal} and math {x:1} intact.") == "Kept {a literal} and math {x:1} intact."
+
+
+def test_adapter_uses_completed_tool_output_when_sdk_omits_final_output():
+    """A successful action must still be spoken when a provider leaves
+    RunResult.final_output empty."""
+    from jarvis.openai_agent.adapter import _spoken_result
+
+    tool_item = type("ToolItem", (), {
+        "type": "tool_call_output_item", "output": "Now playing Midnight City, sir."
+    })()
+    result = type("Result", (), {"final_output": None, "new_items": [tool_item]})()
+    assert _spoken_result(result) == "Now playing Midnight City, sir."
+
+
+def test_adapter_always_has_a_nonempty_voice_fallback():
+    from jarvis.openai_agent.adapter import _spoken_result
+
+    result = type("Result", (), {"final_output": None, "new_items": []})()
+    assert _spoken_result(result) == "Done, sir."
+
+
+def test_adapter_speaks_real_answer_over_lazy_filler():
+    """If the model shrugs off a real explanation with 'there you have it, sir.', the
+    substantial tool answer is spoken instead."""
+    from jarvis.openai_agent.adapter import _spoken_result
+
+    answer = ("The Kalman filter tracks an object by predicting its next state from a "
+              "motion model, then correcting that prediction with each noisy "
+              "measurement, weighting the two by their relative uncertainty. " * 2)
+    tool_item = type("ToolItem", (), {"type": "tool_call_output_item", "output": answer})()
+    result = type("Result", (), {"final_output": "There you have it, sir.",
+                                  "new_items": [tool_item]})()
+    assert _spoken_result(result) == answer.strip()
+
+
+def test_adapter_keeps_a_genuine_short_final_reply():
+    """A short, real confirmation is NOT overridden — only content-free filler is."""
+    from jarvis.openai_agent.adapter import _spoken_result
+
+    tool_item = type("ToolItem", (), {"type": "tool_call_output_item",
+                                       "output": "Opening Kalman Filtering.pdf, sir."})()
+    result = type("Result", (), {"final_output": "Opening Kalman Filtering.pdf, sir.",
+                                  "new_items": [tool_item]})()
+    assert _spoken_result(result) == "Opening Kalman Filtering.pdf, sir."

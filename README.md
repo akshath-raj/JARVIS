@@ -6,7 +6,7 @@
 ![Local-first](https://img.shields.io/badge/local--first-Ollama%20%2B%20Whisper%20%2B%20Kokoro-orange)
 
 A voice-enabled assistant in the spirit of Iron Man's JARVIS. Wake it with
-**"Hey Jarvis,"** talk to it, and it controls your Mac: plays music, drives the
+**"Hey Jarvis,"** at the beginning of a turn, then talk to it, and it controls your Mac: plays music, drives the
 browser, reads and explains what's on your screen, answers questions from your own
 documents, manages a calendar and reminders, organises your files, and runs a
 focus-assist mode that closes distractions — all narrated back to you, with a
@@ -25,7 +25,8 @@ searches the web, then answers).
 ## Contents
 - [Feature overview](#feature-overview)
 - [Two pipelines (`JARVIS_MODE`)](#two-pipelines-jarvis_mode)
-- [Install & run — step by step](#install--run--step-by-step)
+- [Quick install (npm)](#quick-install-npm)
+- [Install & run — step by step (manual)](#install--run--step-by-step-manual)
 - [Optional features & their setup](#optional-features--their-setup)
 - [Platform support](#platform-support)
 - [Configuration reference](#configuration-reference)
@@ -74,6 +75,28 @@ your home folder**. *"organise my downloads"*, *"move X to Y"*, *"open my recent
 *"remind me to submit at 9pm"*, *"remind me in an hour"*, *"add milk to my list"*. A
 due reminder **rings an alarm**, pops up on the HUD, and speaks; *"stop the alarm"* / *"I'm done with X"*.
 
+### 💡 Screen & sound controls
+JARVIS drives your Mac's own **display brightness**, **system volume**, and
+**appearance** — separate from a song's or a video's volume.
+- *"set the brightness to 40%"*, *"dim the screen"*, *"brighter"*
+- *"turn the volume down"*, *"set the sound to 30%"*, *"mute"* / *"unmute"*
+- *"switch to dark mode"* / *"light mode"*
+
+> Precise brightness needs the `brightness` CLI (`brew install brightness`);
+> without it JARVIS steps the brightness keys (needs **Accessibility** permission).
+
+### 📖 Reading mode
+*"reading mode"* / *"set me up to read"* turns your Mac into a comfortable reading
+space — and *"stop reading mode"* / *"I'm done reading"* puts everything back:
+- **Warm tone** (Night Shift) so it's easy on the eyes,
+- a **dark, low-glare background** (Dark Mode),
+- **softer brightness** tuned for reading, and
+- **soft instrumental music** on Spotify in the background at a low volume.
+
+All the settings it changes are **saved first and restored on exit**. Tune the
+defaults with `JARVIS_READING_*` (see [Configuration](#configuration-reference)).
+For the warm tone, install the `nightlight` CLI (`brew install nightlight`).
+
 ### 🎯 Focus assist mode
 *"focus mode"*, *"start a pomodoro"* → **closes every open distraction** (Instagram,
 YouTube, Netflix, TikTok, Reddit, X…), starts a timer, and **keeps closing anything
@@ -106,8 +129,48 @@ Document RAG and long-term memory always use **local** Ollama embeddings in eith
 
 ---
 
-## Install & run — step by step
+## Quick install (npm)
 
+If you just want to run it, install the launcher from npm. It bundles JARVIS,
+builds an isolated Python environment on first run, and creates your config — you
+only need Python, Node, and (for the local models) Ollama on your Mac.
+
+```bash
+# one-time system tools (skip any you already have)
+brew install python node ollama ffmpeg
+brew services start ollama && ollama pull nomic-embed-text
+
+# install JARVIS
+npm install -g @akshath-raj/jarvis
+
+jarvis setup       # builds the Python env + creates ~/.jarvis/.env  (first run only)
+jarvis config      # paste your Cerebras + Deepgram API keys (see Step 6 below)
+jarvis             # start talking — say "Hey Jarvis"
+```
+
+That's it. The `jarvis` command:
+
+| Command | What it does |
+|---|---|
+| `jarvis` | Start the voice assistant (auto-runs setup the first time) |
+| `jarvis setup` | Build the Python env, install deps, create your config |
+| `jarvis config` | Open `~/.jarvis/.env` to add/edit your API keys |
+| `jarvis doctor` | Check prerequisites and configuration |
+| `jarvis update` | Reinstall Python deps after upgrading the package |
+
+Your keys and Python environment live under `~/.jarvis/`, so they **survive
+reinstalls and upgrades**. Prefer not to install globally? Use
+`npx @akshath-raj/jarvis` instead of `jarvis`.
+
+> **Why a Python env?** JARVIS's voice + agent stack is Python; the npm package is a
+> thin launcher that sets that up for you. First `jarvis setup` downloads a few
+> hundred MB of ML deps and takes a few minutes.
+
+---
+
+## Install & run — step by step (manual)
+
+> Prefer to run from a clone, or want to see exactly what the launcher does?
 > **Follow these in order on a Mac.** ~15 minutes. **Steps 1–8 give you a talking
 > assistant** with document Q&A, focus mode, and the HUD. Everything else is in
 > [Optional features](#optional-features--their-setup). Every command is copy-paste.
@@ -121,7 +184,7 @@ When it finishes, run the two `echo`/`eval` lines it prints (to add `brew` to yo
 
 ### Step 2 — Install the system tools
 ```bash
-brew install python git ollama ffmpeg
+brew install python git ollama ffmpeg node
 ```
 
 ### Step 3 — Get the code
@@ -244,16 +307,29 @@ and the assignment workflow (below).
 <details>
 <summary><b>🧭 Browser agent (logged-in web workflows)</b></summary>
 
-Multi-step tasks on sites you're logged into (*"download my notes from VTOP"*). Runs
-in its own venv because its dependencies conflict with the main stack:
+Multi-step tasks on sites you're logged into (*"download my notes from VTOP"*). By
+default JARVIS uses **Playwright MCP** through Node.js (installed in Step 2). It opens
+a visible, dedicated Chrome profile at `~/.jarvis/pw-profile`; sign in there once and
+the session is retained for future tasks. It reads accessibility snapshots, uses vision
+when needed for custom/canvas controls, and handles normal multi-tab navigation,
+uploads, downloads, and dynamic pages.
+
+Needs `OPENAI_API_KEY`. It acts only on spoken browser-task requests and stops for a
+login, MFA, CAPTCHA, paywall, or other human check rather than trying to bypass it.
+
+The older `browser-use` runner is available only as a fallback when
+`JARVIS_PW_AGENT=0`. It runs in its own venv because its dependencies conflict with
+the main stack:
+
 ```bash
 bash scripts/setup_browser_agent.sh
 # optional local captcha solver:
 ollama pull qwen2.5vl:7b
 ```
-Needs `OPENAI_API_KEY`. ⚠️ It drives your **real logged-in Chrome**, so browsed page
-content goes to OpenAI and a malicious page could prompt-inject it — it runs only
-when you ask, with step/time caps.
+
+⚠️ Browsed page content is supplied to the browser model, so do not use it for a task
+that exposes secrets you do not want the model to see. Page text is treated as data,
+not instructions.
 </details>
 
 <details>
@@ -308,12 +384,15 @@ every option with inline notes). The essentials:
 | `JARVIS_MODE` | `1` | `1` cloud, `0` local |
 | `JARVIS_ORCHESTRATOR` | `openai` | full-featured single-agent brain (or `langgraph` / `native`) |
 | `JARVIS_AGENT_PROVIDER` | `cerebras` | `cerebras` (fast) or `openai`; falls back to OpenAI if no Cerebras key |
-| `JARVIS_WAKE` / `JARVIS_WAKE_WORDS` | `1` / `jarvis,…` | wake word on/off + trigger words |
+| `JARVIS_WAKE` / `JARVIS_WAKE_WORDS` | `1` / `jarvis` | strict wake phrase on/off + trigger words |
 | `JARVIS_UI` | `1` | HUD dashboard (auto-opens on launch) |
 | `JARVIS_RAG` / `JARVIS_RAG_DIRS` | `1` / Downloads,Documents,Desktop | document indexing + folders |
 | `JARVIS_FILES` / `JARVIS_FILES_SANDBOX` | `1` / `~` | file organiser + sandbox root |
 | `JARVIS_SCHEDULER` | `1` | calendar / to-dos / reminders / alarms |
 | `JARVIS_FOCUS` / `JARVIS_FOCUS_TECHNIQUE` | `1` / `pomodoro` | focus mode + default technique |
+| `JARVIS_READING_BRIGHTNESS` / `JARVIS_READING_VOLUME` | `0.45` / `25` | reading-mode screen brightness (0–1) + system volume (0–100) |
+| `JARVIS_READING_MUSIC` | `peaceful piano instrumental for reading` | Spotify query for reading-mode background music |
+| `JARVIS_READING_DARK_MODE` / `JARVIS_READING_NIGHT_SHIFT` | `1` / `1` | dark background + warm tone in reading mode |
 | `JARVIS_BROWSER_AGENT` | `1` | logged-in browser workflows |
 
 ---
@@ -329,8 +408,9 @@ mic ─► VAD ─► STT ─► [wake gate] ─► BRAIN (agent + tools + memor
      Calendar/Reminders     Focus mode      HUD dashboard     Memory
 ```
 
-- **Wake word with smart follow-up:** say *"jarvis"* / *"hey jarvis"* to activate
-  (the word is stripped). After a **clarifying question** it stays awake; after a
+- **Wake word with smart follow-up:** say *"hey jarvis"* at the **start** of a
+  turn to activate (the phrase is stripped). Mentions in music or background
+  speech are ignored. After a **clarifying question** it stays awake; after a
   normal answer it sleeps. `JARVIS_WAKE=0` replies to everything.
 - **One agent, all tools:** device actions resolve in one fast round-trip;
   informational tools keep the loop open so multi-step requests complete and are

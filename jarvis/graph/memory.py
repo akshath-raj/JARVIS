@@ -17,11 +17,43 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 from pathlib import Path
 
 logger = logging.getLogger("jarvis.memory")
+
+# Pure control / transport commands carry no durable preference signal: the user
+# saying "volume up" or "pause" a hundred times says nothing about their tastes.
+# Commands whose WHOLE text is one of these are never logged for learning, so they
+# can't be mistaken for a favourite. Content commands ("play my knight playlist",
+# "open youtube") don't match and ARE kept — that's where preferences come from.
+_UTILITY_COMMAND = re.compile(
+    r"^\s*(please\s+|can you\s+|could you\s+)?"
+    r"(?:"
+    r"(?:turn|crank)\s+(?:it\s+|the\s+)?(?:up|down|volume)|"
+    r"(?:increase|decrease|raise|lower|reduce|boost)\s+(?:the\s+)?volume|"
+    r"volume\s+(?:up|down)?|louder|quieter|softer|"
+    r"mute|unmute|"
+    r"pause|resume|unpause|continue|play|stop|"
+    r"next(?:\s+(?:track|song|one|video))?|previous(?:\s+(?:track|song|one))?|"
+    r"skip(?:\s+(?:it|ahead|back|this))?|replay|restart|"
+    r"rewind|fast[\s-]?forward|forward|go\s+back|"
+    r"brightness(?:\s+(?:up|down))?|dim(?:\s+(?:it|the\s+screen))?|brighten|"
+    r"full\s?screen|exit\s+full\s?screen|"
+    r"louder|turn\s+it\s+(?:up|down)"
+    r")"
+    r"[\s.!,]*$",
+    re.I,
+)
+
+
+def is_utility_command(text: str) -> bool:
+    """True if the command is a bare control/transport action (volume, pause,
+    next, brightness, …) with no content — the kind that recurs constantly but
+    reveals no preference. Such commands are kept out of the learning log."""
+    return bool(_UTILITY_COMMAND.match((text or "").strip()))
 
 # Cap the transient log even when no summarizer model is configured, so it can
 # never grow without bound; oldest lines are dropped first.
@@ -31,14 +63,23 @@ _MAX_PROFILE_CHARS = 4000
 
 SUMMARY_PROMPT = (
     "You maintain a concise profile of the USER for their personal voice "
-    "assistant. You are given the CURRENT PROFILE and a LOG of recent things the "
-    "user did and said. Produce an UPDATED profile: a short markdown bullet list "
-    "(at most 15 bullets) of DURABLE facts, preferences, habits, and interests "
-    "about the user. Merge the new information into the current profile, keep what "
-    "is still true, remove duplicates, and DROP one-off or transient items — a "
-    "single song play, search, or request is NOT durable unless it shows a clear "
-    "recurring pattern. Keep each bullet short and factual. Output ONLY the bullet "
-    "list, nothing else."
+    "assistant. You are given the CURRENT PROFILE and a LOG of recent commands the "
+    "user gave. Produce an UPDATED profile: a short markdown bullet list (at most "
+    "15 bullets) of DURABLE facts, preferences, habits, and interests about the "
+    "user.\n"
+    "Rules:\n"
+    "- A preference is a repeated SPECIFIC CHOICE: a named playlist, artist, genre, "
+    "website, app, topic, person, or routine that the user returns to. Only record "
+    "something as a preference when the log shows it CHOSEN MORE THAN ONCE, or the "
+    "current profile already has it.\n"
+    "- NEVER infer a preference from a generic control command (volume, pause, "
+    "resume, skip/next/previous, stop, mute, brightness, fullscreen). Frequent use "
+    "of these says nothing about the user — ignore them entirely.\n"
+    "- DROP one-off items: a single play/search/open with no repetition is not "
+    "durable.\n"
+    "- Merge new information into the current profile, keep what is still true, and "
+    "remove duplicates.\n"
+    "Keep each bullet short and factual. Output ONLY the bullet list, nothing else."
 )
 
 
@@ -148,6 +189,21 @@ class MemoryStore:
                 return f"forgotten: {removed}"
         return f"I have no memory matching '{query}'"
 
+    def remove_exact(self, text: str) -> bool:
+        """Delete the profile bullet that exactly matches `text` (used by the HUD's
+        delete button, which passes back a bullet verbatim). Returns True if a
+        bullet was removed."""
+        target = _norm(text)
+        if not target:
+            return False
+        lines = self._profile_lines()
+        kept = [ln for ln in lines if _norm(_bullet(ln)) != target]
+        if len(kept) == len(lines):
+            return False
+        self._write_profile("\n".join(kept))
+        logger.info("removed memory (UI): %s", text)
+        return True
+
     # ── transient activity/conversation log ─────────────────────────────────
     def log_activity(self, detail: str) -> None:
         """Record something the user did/said. Best-effort; never raises into the
@@ -167,6 +223,17 @@ class MemoryStore:
 
     def log_turn(self, text: str) -> None:
         """Log a conversation utterance into the same transient learning log."""
+        self.log_activity(text)
+
+    def log_command(self, text: str) -> None:
+        """Log a WOKEN command (JARVIS was addressed with the wake word) for
+        learning. Bare control/transport commands are skipped — they recur
+        constantly but reveal no preference, so they must not pollute the profile.
+        Only commands that carry content (a playlist, a site, a topic) are kept, so
+        the summarizer can spot genuine recurring preferences."""
+        text = (text or "").strip()
+        if not text or is_utility_command(text):
+            return
         self.log_activity(text)
 
     def _read_log(self) -> list[dict]:

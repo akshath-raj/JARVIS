@@ -22,6 +22,40 @@ class _Rec(MediaController):
         return [s for s in self.scripts if "repeat with w in windows" not in s][-1]
 
 
+class _CloseRec(MediaController):
+    """Captures the single script and returns a fixed osascript result."""
+    def __init__(self, ret: str):
+        super().__init__()
+        self.script = ""
+        self._ret = ret
+
+    def _osa(self, script: str) -> str:
+        self.script = script
+        return self._ret
+
+
+def test_close_tabs_matching_builds_script_and_counts():
+    m = _CloseRec("3")
+    msg = m.close_tabs_matching("VTOP")
+    assert 'set q to "vtop"' in m.script                 # query lower-cased + quoted
+    assert "URL of t contains q" in m.script
+    assert "title of t contains q" in m.script
+    assert "by -1" in m.script                            # closes in reverse (index-safe)
+    assert msg == "closed 3 VTOP tabs, sir"
+
+
+def test_close_tabs_matching_reports_when_none_open():
+    assert _CloseRec("0").close_tabs_matching("netflix") == "no netflix tabs were open, sir"
+
+
+def test_close_tabs_matching_requires_a_query():
+    import pytest
+
+    from jarvis.tools.media import MediaError
+    with pytest.raises(MediaError):
+        _CloseRec("0").close_tabs_matching("   ")
+
+
 def test_control_targets_playing_tab():
     m = _Rec("2,3")
     m.control("pause")

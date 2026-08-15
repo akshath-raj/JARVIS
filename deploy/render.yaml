@@ -1,0 +1,26 @@
+# Render blueprint for the JARVIS MCP server.
+# In Render: New → Blueprint → point at this repo. Endpoint: https://<svc>.onrender.com/mcp
+services:
+  - type: web
+    name: jarvis-mcp
+    runtime: docker
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /mcp
+    autoDeploy: true
+    envVars:
+      - key: JARVIS_MCP_LOCAL_TOOLS
+        value: "0"                # cloud host → macOS tools hidden
+      # Set these in the Render dashboard (do NOT commit secrets):
+      - key: TAVILY_API_KEY
+        sync: false               # enables web_search
+      - key: OPENAI_API_KEY
+        sync: false               # enables document RAG answers + embeddings
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SPOTIFY_CLIENT_SECRET
+        sync: false
+      # Point RAG at a mounted/synced docs dir if you want document tools in the cloud:
+      # - key: JARVIS_RAG_DIRS
+      #   value: /data/docs

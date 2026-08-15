@@ -19,7 +19,7 @@ from livekit.agents import AgentSession, JobContext, JobProcess, WorkerOptions, 
 from livekit.plugins import silero
 
 from jarvis import pipeline
-from jarvis.activation import WakeController
+from jarvis.activation import VOICE_NOT_RECOGNIZED, WakeController
 from jarvis.config import config
 from jarvis.context import JarvisContext
 
@@ -35,8 +35,10 @@ def _wake() -> WakeController:
     return WakeController(
         enabled=config.wake_enabled,
         words=config.wake_words,
+        require_hey=config.wake_require_hey,
         followup_seconds=config.wake_followup_seconds,
         continuation_seconds=config.wake_continuation_seconds,
+        strict=config.wake_strict,
     )
 
 
@@ -81,10 +83,9 @@ async def _entrypoint_langgraph(ctx: JobContext) -> None:
         # Not every conversation item is a message (e.g. AgentHandoff has no
         # text_content) — access it defensively.
         text = getattr(item, "text_content", "") or ""
-        if role == "user" and text:
-            # Feed the transient learning log; the memory store distills it into
-            # the durable profile in the background every N entries (see memory.py).
-            memory.log_turn(text)
+        # User commands are logged for learning in BaseJarvisAgent.gate (woken turns
+        # only, control commands filtered), so ambient speech never enters the
+        # profile. Here we only drive the follow-up window.
         if role == "assistant":
             userdata.activation.note_reply(text)
 
@@ -213,11 +214,12 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
             return
         role = getattr(item, "role", None)
         text = getattr(item, "text_content", "") or ""
-        if role == "user" and text:
-            memory.log_turn(text)  # distilled into the durable profile in the background
+        # NB: user commands are logged for learning in BaseJarvisAgent.gate (woken
+        # turns only), not here — so ambient speech the mic overhears never enters
+        # the profile. This handler only drives the reply window and the HUD feed.
         if role == "assistant":
             userdata.activation.note_reply(text)
-        if role in ("user", "assistant") and text:
+        if role in ("user", "assistant") and text and text != VOICE_NOT_RECOGNIZED:
             if convlog is not None:
                 convlog.add(role, text)  # persistent transcript for the HUD
             if ui is not None:

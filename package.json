@@ -1,0 +1,55 @@
+{
+  "name": "@akshath-raj/jarvis",
+  "version": "1.0.0",
+  "description": "Iron-Man-style, voice-controlled AI assistant for macOS — plays music, drives the browser, reads your screen, answers from your documents, and more. One `jarvis` command sets everything up.",
+  "keywords": [
+    "jarvis",
+    "voice-assistant",
+    "ai",
+    "macos",
+    "speech-to-text",
+    "llm",
+    "cerebras",
+    "deepgram",
+    "ollama",
+    "whisper"
+  ],
+  "homepage": "https://github.com/akshath-raj/JARVIS#readme",
+  "bugs": {
+    "url": "https://github.com/akshath-raj/JARVIS/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akshath-raj/JARVIS.git"
+  },
+  "license": "MIT",
+  "author": "Akshath",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "commonjs",
+  "bin": {
+    "jarvis": "bin/jarvis.js"
+  },
+  "files": [
+    "bin/",
+    "jarvis/",
+    "scripts/",
+    "requirements.txt",
+    "requirements-browser.txt",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin"
+  ],
+  "preferGlobal": true,
+  "scripts": {
+    "prepack": "find jarvis scripts -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true",
+    "postinstall": "node bin/jarvis.js postinstall"
+  }
+}

@@ -112,6 +112,32 @@ class UIController:
             "image": image_b64 or "", "source": source or "",
         })
 
+    # ── memory bank edits (from the HUD's add/delete controls) ───────────────
+    def add_memory(self, text: str) -> bool:
+        """Add a user-entered memory/preference straight to the durable profile.
+        Returns True if stored."""
+        text = (text or "").strip()
+        if self._memory is None or not text:
+            return False
+        try:
+            self._memory.remember(text)  # explicit → written to the profile
+        except Exception:
+            return False
+        self._emit({"type": "memory"})  # nudge connected HUDs to refresh
+        return True
+
+    def delete_memory(self, text: str) -> bool:
+        """Delete a memory the HUD passed back verbatim. Returns True if removed."""
+        if self._memory is None or not (text or "").strip():
+            return False
+        try:
+            removed = bool(self._memory.remove_exact(text))
+        except Exception:
+            return False
+        if removed:
+            self._emit({"type": "memory"})
+        return removed
+
     def navigate(self, section: str, item_id=None) -> None:
         """Direct the user to a section (about / memories / conversations) and,
         optionally, a specific item."""
