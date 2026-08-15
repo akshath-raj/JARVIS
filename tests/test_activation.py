@@ -1,9 +1,15 @@
 """Tests for the wake-word + smart-follow-up activation state machine."""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+from types import SimpleNamespace
+
+import pytest
+from livekit.agents import StopResponse
 
 from jarvis.activation import WakeController, current_conversation
+from jarvis.agents.base import BaseJarvisAgent
 
 
 @dataclass
@@ -189,3 +195,36 @@ def test_current_conversation_noop_when_disabled_or_short():
     items = [_Item("a", 0.0), _Item("b", 1000.0)]
     assert current_conversation(items, max_gap=0) == items      # bound disabled
     assert current_conversation(items[:1], max_gap=45) == items[:1]  # single item
+
+
+# ── the wake GATE at the agent layer (blanking un-woken turns) ─────────────────
+class _Msg:
+    """Minimal stand-in for a LiveKit ChatMessage."""
+    def __init__(self, text):
+        self.content = [text]
+
+    @property
+    def text_content(self):
+        return "".join(c for c in self.content if isinstance(c, str))
+
+
+def _fake_agent(ctl):
+    return SimpleNamespace(session=SimpleNamespace(userdata=SimpleNamespace(activation=ctl)))
+
+
+def test_ungated_turn_is_blanked_so_it_cannot_leak():
+    # An ambient turn (no wake word) must be STOPPED *and* emptied — otherwise it
+    # lingers in the ChatContext and gets replayed to the brain on the next woken
+    # turn, making JARVIS act on things nobody addressed to it.
+    ctl = WakeController(enabled=True, words=("jarvis",), require_hey=False, strict=True)
+    msg = _Msg("play some music")
+    with pytest.raises(StopResponse):
+        asyncio.run(BaseJarvisAgent.on_user_turn_completed(_fake_agent(ctl), None, msg))
+    assert msg.text_content == ""   # blanked → every downstream consumer skips it
+
+
+def test_woken_turn_is_rewritten_without_wake_word():
+    ctl = WakeController(enabled=True, words=("jarvis",), require_hey=False, strict=True)
+    msg = _Msg("jarvis play some jazz")
+    asyncio.run(BaseJarvisAgent.on_user_turn_completed(_fake_agent(ctl), None, msg))
+    assert msg.text_content == "play some jazz"   # woken, wake word stripped

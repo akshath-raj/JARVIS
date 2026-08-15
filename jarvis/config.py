@@ -137,6 +137,14 @@ class Config:
     # piled up while JARVIS was asleep. Set 0 to replay the whole session (not
     # recommended for an always-listening mic).
     conversation_gap_seconds: float = float(os.getenv("JARVIS_CONVO_GAP", "45"))
+    # Deepgram "keyterm" prompting biases the STT toward these phrases. Boosting the
+    # wake word improves recall when you DO say it, but it also makes the STT
+    # hallucinate the wake word from ambient/background audio — a major source of
+    # FALSE wakes on an always-on mic. EMPTY by default (no boosting). Set e.g.
+    # "Hey Jarvis" only if you find the wake word is genuinely missed too often.
+    stt_keyterms: tuple[str, ...] = tuple(
+        t.strip() for t in os.getenv("JARVIS_STT_KEYTERMS", "").split(",") if t.strip()
+    )
 
     # ── Orchestrator / brain ───────────────────────────────────────────
     # "langgraph" (default): LangGraph react-agent brain + persistent memory.

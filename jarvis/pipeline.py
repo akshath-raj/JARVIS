@@ -46,11 +46,15 @@ def build_stt() -> _stt.STT:
     if config.cloud:
         if not config.deepgram_api_key:
             raise ConfigError("CLOUD mode needs DEEPGRAM_API_KEY for speech-to-text.")
+        # Keyterm boosting is OFF by default: biasing Deepgram toward "Jarvis" makes
+        # it hallucinate the wake word from background/ambient audio, which is a major
+        # source of false wakes on an always-on mic. Opt back in via JARVIS_STT_KEYTERMS.
+        extra = {"keyterm": list(config.stt_keyterms)} if config.stt_keyterms else {}
         return deepgram.STT(
             api_key=config.deepgram_api_key,
             model=config.deepgram_model,
             language="en",
-            keyterm=["Jarvis", "Hey Jarvis"],
+            **extra,
         )
 
     from jarvis.plugins.whisper_stt import WhisperSTT

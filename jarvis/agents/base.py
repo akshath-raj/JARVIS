@@ -35,6 +35,14 @@ class BaseJarvisAgent(Agent):
         allowed, rewritten = ctl.gate(new_message.text_content or "")
         if not allowed:
             logger.info("Ignoring (not woken): %r", new_message.text_content)
+            # BLANK the un-woken turn before stopping. StopResponse only cancels the
+            # reply — the user transcript still lands in the ChatContext, so without
+            # this an ambient sentence ("play some music", "open that video") stays in
+            # history and gets REPLAYED to the brain on the next turn that DOES wake
+            # JARVIS, making it act on things nobody addressed to it. Every downstream
+            # consumer (the LLM adapter, memory log, UI transcript) skips empty-text
+            # items, so emptying the content makes an un-woken turn a true no-op.
+            new_message.content = [""]
             raise StopResponse()
         if rewritten is not None:
             # Strip the wake word so the agent sees just the request.
