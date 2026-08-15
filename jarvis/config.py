@@ -269,6 +269,17 @@ class Config:
     spotify_redirect_uri: str = os.getenv(
         "SPOTIFY_REDIRECT_URI", "http://127.0.0.1:8080/callback"
     )
+    # Optional: attach the external Spotify MCP server (marcelmarais/spotify-mcp-server)
+    # to add richer controls JARVIS lacks — queue, playlist reorder, album saves,
+    # Spotify Connect device transfer. The built-in AppleScript controller stays the
+    # default for play/pause/skip/volume. Requires Premium + a one-time build & auth
+    # of that Node server (see README). Point _PATH at its built build/index.js.
+    spotify_mcp_enabled: bool = _truthy(os.getenv("JARVIS_SPOTIFY_MCP", "0"))
+    spotify_mcp_command: str = os.getenv("JARVIS_SPOTIFY_MCP_COMMAND", "node")
+    spotify_mcp_server_path: str = os.path.expanduser(os.getenv("JARVIS_SPOTIFY_MCP_PATH", ""))
+    # Working dir for the server (where its spotify-config.json lives); defaults to
+    # the server repo root inferred from the build/index.js path.
+    spotify_mcp_cwd: str = os.path.expanduser(os.getenv("JARVIS_SPOTIFY_MCP_CWD", ""))
 
 
 config = Config()

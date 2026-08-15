@@ -77,7 +77,11 @@ _GUIDE = (
     "playlist/top/liked/recently-played tools. set_music_volume / change_volume adjust "
     "ONLY the Spotify SONG's volume, and ONLY when the user explicitly says the music/"
     "song/track/Spotify (e.g. 'turn the music up', 'make the song quieter', 'lower "
-    "Spotify'). open_site opens a website or app by "
+    "Spotify'). If dedicated Spotify tools like addToQueue/getQueue/reorderPlaylistItems/"
+    "saveOrRemoveAlbumForUser/getAvailableDevices are available, use them for queueing, "
+    "reordering playlists, saving albums, or switching Spotify devices — but for "
+    "play/pause/skip and volume ALWAYS use the built-in music tools above, not those. "
+    "open_site opens a website or app by "
     "name. play_youtube ONLY when the user says PLAY or WATCH one specific video; if "
     "they ask to LIST / FIND / RECOMMEND / 'good videos on X' or 'best … videos', use "
     "web_search and just TELL them the list — do NOT play anything. control_video "
@@ -184,7 +188,8 @@ def _build_screen() -> ScreenController:
 def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
                 media=None, screen=None, announce=None, workspace=None,
                 ui=None, open_cb=None, scheduler=None, rag=None, organizer=None,
-                focus=None, system=None, reading=None, agent_model=None):
+                focus=None, system=None, reading=None, mcp_servers=None,
+                agent_model=None):
     """Return (triage_agent, memory). Dependencies are injectable for tests.
 
     `ui` (a UIController) enables the HUD dashboard tools; `open_cb` is called to
@@ -243,6 +248,10 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
     if focus is not None:
         tools += build_focus_tools(focus=focus, memory=memory)
 
+    # Optional external MCP servers (e.g. the Spotify MCP for queue/reorder/album/
+    # device tools). Connected by the caller; absent lists change nothing.
+    mcp_servers = mcp_servers or []
+
     agent = Agent[BrainContext](
         name="JARVIS",
         instructions=_instructions,
@@ -250,8 +259,12 @@ def build_brain(*, spotify=None, browser=None, tavily=None, memory=None,
         model_settings=settings,
         tool_use_behavior=_tool_final_policy,
         tools=tools,
+        mcp_servers=mcp_servers,
     )
-    logger.info("OpenAI Agents brain ready (single agent, model %s, %d tools)", model, len(tools))
+    logger.info(
+        "OpenAI Agents brain ready (single agent, model %s, %d tools, %d MCP server(s))",
+        model, len(tools), len(mcp_servers),
+    )
     return agent, memory
 
 

@@ -242,6 +242,38 @@ Add any of these later — each is independent. Put keys in the same `.env`.
 </details>
 
 <details>
+<summary><b>🎚️ Spotify MCP server — extra controls (optional, Premium)</b></summary>
+
+JARVIS's built-in Spotify control (play/pause/skip/volume, playlists, library) runs
+**in the background via the desktop app** and stays the default. You can *additionally*
+attach the community **[Spotify MCP server](https://github.com/marcelmarais/spotify-mcp-server)**
+to unlock richer operations JARVIS doesn't have on its own: **queue management,
+playlist reordering, saving albums, and Spotify Connect device transfer**.
+
+> These use the Spotify **Web API**, so they need **Spotify Premium** and an **active
+> device**. Playlist *writes* also require your Spotify app to be out of Development
+> Mode (or your account added to its dashboard allowlist). If the server is off or
+> unreachable, JARVIS behaves exactly as before.
+
+**One-time setup** (needs Node.js):
+```bash
+git clone https://github.com/marcelmarais/spotify-mcp-server
+cd spotify-mcp-server
+npm install && npm run build
+npm run auth        # opens a browser to authorise your Spotify account
+```
+Then in your `.env`:
+```ini
+JARVIS_SPOTIFY_MCP=1
+JARVIS_SPOTIFY_MCP_PATH=/absolute/path/to/spotify-mcp-server/build/index.js
+```
+Restart JARVIS. It launches the server on startup and the agent gains the extra
+tools automatically — *"add this to the queue"*, *"move it up in my playlist"*,
+*"save this album"*, *"play on my speaker"*. Core playback still uses the fast,
+focus-safe built-in path.
+</details>
+
+<details>
 <summary><b>🌐 Tavily (live web search)</b></summary>
 
 Get a free key at **[app.tavily.com](https://app.tavily.com)** and add:
@@ -338,6 +370,7 @@ every option with inline notes). The essentials:
 | `JARVIS_READING_BRIGHTNESS` / `JARVIS_READING_VOLUME` | `0.45` / `25` | reading-mode screen brightness (0–1) + system volume (0–100) |
 | `JARVIS_READING_MUSIC` | `peaceful piano instrumental for reading` | Spotify query for reading-mode background music |
 | `JARVIS_READING_DARK_MODE` / `JARVIS_READING_NIGHT_SHIFT` | `1` / `1` | dark background + warm tone in reading mode |
+| `JARVIS_SPOTIFY_MCP` / `JARVIS_SPOTIFY_MCP_PATH` | `0` / — | attach the Spotify MCP server for queue/reorder/album/device tools (Premium) |
 | `JARVIS_BROWSER_AGENT` | `1` | logged-in browser workflows |
 
 ---

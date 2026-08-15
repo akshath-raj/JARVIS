@@ -184,10 +184,17 @@ async def _entrypoint_openai(ctx: JobContext) -> None:
 
         ui.set_command_handler(_on_cmd)
 
+    # Optionally attach the external Spotify MCP server (extra queue/reorder/album/
+    # device tools). Connects here so its stdio subprocess lives for the session;
+    # returns None — and changes nothing — when disabled or unavailable.
+    from jarvis.openai_agent.spotify_mcp import connect_spotify_mcp
+
+    spotify_mcp = await connect_spotify_mcp()
+
     brain, memory = build_brain(
         announce=announcer.announce, memory=shared_memory,
         ui=ui, open_cb=open_cb, scheduler=scheduler, rag=rag, organizer=organizer,
-        focus=focus,
+        focus=focus, mcp_servers=[spotify_mcp] if spotify_mcp else None,
     )
 
     from jarvis.agents.graph_agent import GraphAgent
