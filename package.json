@@ -1,6 +1,6 @@
 {
   "name": "@aksr333/jarvis",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Iron-Man-style, voice-controlled AI assistant for macOS — plays music, drives the browser, reads your screen, answers from your documents, and more. One `jarvis` command sets everything up.",
   "keywords": [
     "jarvis",
