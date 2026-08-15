@@ -141,7 +141,7 @@ brew install python node ollama ffmpeg
 brew services start ollama && ollama pull nomic-embed-text
 
 # install JARVIS
-npm install -g @akshath-raj/jarvis
+npm install -g @aksr333/jarvis
 
 jarvis setup       # builds the Python env + creates ~/.jarvis/.env  (first run only)
 jarvis config      # paste your Cerebras + Deepgram API keys (see Step 6 below)
@@ -160,7 +160,7 @@ That's it. The `jarvis` command:
 
 Your keys and Python environment live under `~/.jarvis/`, so they **survive
 reinstalls and upgrades**. Prefer not to install globally? Use
-`npx @akshath-raj/jarvis` instead of `jarvis`.
+`npx @aksr333/jarvis` instead of `jarvis`.
 
 > **Why a Python env?** JARVIS's voice + agent stack is Python; the npm package is a
 > thin launcher that sets that up for you. First `jarvis setup` downloads a few
