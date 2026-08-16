@@ -159,9 +159,33 @@ function renderTodos(state) {
   todos.forEach((t, i) => {
     const li = document.createElement("li");
     li.style.animationDelay = `${i * 0.05}s`;
-    li.innerHTML = `<span class="box"></span><span>${escapeHtml(t.text)}</span>`;
+    li.innerHTML = `<span class="box"></span><span class="item-text">${escapeHtml(t.text)}</span>`;
+    const del = document.createElement("button");
+    del.className = "item-del";
+    del.title = "Remove to-do";
+    del.textContent = "×";
+    del.addEventListener("click", () => deleteTodo(t));
+    li.appendChild(del);
     list.appendChild(li);
   });
+}
+async function deleteTodo(t) {
+  try {
+    const r = await fetch("/api/todo/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: t.id, text: t.text }),
+    });
+    const data = await r.json();
+    if (data) applyTasks(data.todos, data.agenda);
+  } catch (_) {}
+}
+function applyTasks(todos, agenda) {
+  lastTodoSig = null; lastAgendaSig = null;   // force both panels to redraw
+  if (lastState) {
+    if (todos) lastState.todos = todos;
+    if (agenda) lastState.agenda = agenda;
+    renderTodos(lastState); renderAgenda(lastState);
+  }
 }
 function fmtAgendaWhen(ts) {
   try {
@@ -186,9 +210,25 @@ function renderAgenda(state) {
     li.className = x.kind === "reminder" ? "reminder" : "";
     li.style.animationDelay = `${i * 0.05}s`;
     const icon = x.kind === "reminder" ? "⏰" : "📅";
-    li.innerHTML = `<span class="icon">${icon}</span><span>${escapeHtml(x.title)}</span><span class="when">${fmtAgendaWhen(x.start)}</span>`;
+    li.innerHTML = `<span class="icon">${icon}</span><span class="item-text">${escapeHtml(x.title)}</span><span class="when">${fmtAgendaWhen(x.start)}</span>`;
+    const del = document.createElement("button");
+    del.className = "item-del";
+    del.title = x.kind === "reminder" ? "Cancel reminder" : "Remove event";
+    del.textContent = "×";
+    del.addEventListener("click", () => deleteAgenda(x));
+    li.appendChild(del);
     list.appendChild(li);
   });
+}
+async function deleteAgenda(x) {
+  try {
+    const r = await fetch("/api/agenda/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: x.id, kind: x.kind, text: x.title }),
+    });
+    const data = await r.json();
+    if (data) applyTasks(data.todos, data.agenda);
+  } catch (_) {}
 }
 
 // ── alarm overlay ────────────────────────────────────────────────────────────

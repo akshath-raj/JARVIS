@@ -173,7 +173,13 @@ body{
 .todo-list li{display:flex;align-items:center;gap:10px;font-size:13px;padding:9px 10px;margin-bottom:7px;
   border:1px solid var(--line);background:rgba(72,217,255,.04);color:#d7f6ff;opacity:0;animation:rowIn .5s ease forwards}
 .todo-list li .box{width:15px;height:15px;border:1.5px solid var(--cyan);flex:none;box-shadow:var(--glow)}
+.todo-list li .item-text{flex:1;min-width:0;word-break:break-word}
 .todo-list li.empty{border-style:dashed;opacity:.5;text-align:center;justify-content:center;padding:16px}
+/* delete (×) button shared by to-dos and agenda rows */
+.todo-list li .item-del,.agenda-list li .item-del{flex:none;background:none;border:none;color:var(--cyan);
+  cursor:pointer;font-size:18px;line-height:1;padding:0 2px;opacity:0;transition:opacity .15s,color .15s}
+.todo-list li:hover .item-del,.agenda-list li:hover .item-del{opacity:.85}
+.todo-list li .item-del:hover,.agenda-list li .item-del:hover{color:#ff6b6b;opacity:1}
 
 /* agenda (events + reminders) */
 .agenda-list{list-style:none;overflow:auto;flex:1;padding-right:6px}

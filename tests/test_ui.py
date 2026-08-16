@@ -78,6 +78,59 @@ def test_memory_routes_add_and_delete(tmp_path):
         assert r.status_code == 404
 
 
+# ── to-do + agenda deletion from the HUD ────────────────────────────────────
+def _task_store(tmp_path):
+    from jarvis.scheduler import TaskStore
+
+    return TaskStore(str(tmp_path / "t.json"))
+
+
+def test_remove_todo_and_agenda_from_hud(tmp_path):
+    import time
+
+    s = _task_store(tmp_path)
+    t = s.add_todo("water the plants")
+    r = s.add_reminder("standup", time.time() + 3600)   # also mirrors a to-do
+    e = s.add_event("dentist", time.time() + 7200)
+    ui = UIController(user="A", tasks=s)
+
+    assert ui.remove_todo(item_id=t["id"]) is True
+    assert "water the plants" not in [x["text"] for x in ui.state(0)["todos"]]
+    assert ui.remove_todo(item_id="missing") is False
+
+    # cancelling the reminder clears it from the agenda AND its mirrored to-do
+    assert ui.remove_agenda_item(item_id=r["id"], kind="reminder") is True
+    agenda = ui.state(0)["agenda"]
+    assert all(a.get("id") != r["id"] for a in agenda)
+    assert "standup" not in [x["text"] for x in ui.state(0)["todos"]]
+
+    assert ui.remove_agenda_item(item_id=e["id"], kind="event") is True
+    assert ui.state(0)["agenda"] == []
+    assert ui.remove_agenda_item(item_id="ghost", kind="event") is False
+
+
+def test_task_delete_routes(tmp_path):
+    import time
+
+    from starlette.testclient import TestClient
+
+    from jarvis.ui.server import UIServer
+
+    s = _task_store(tmp_path)
+    t = s.add_todo("buy milk")
+    e = s.add_event("dentist", time.time() + 3600)
+    ui = UIController(user="A", tasks=s)
+    with TestClient(UIServer(ui, port=0)._app()) as c:
+        r = c.post("/api/todo/delete", json={"id": t["id"]})
+        assert r.status_code == 200 and r.json()["todos"] == []
+        r = c.post("/api/todo/delete", json={"id": "gone"})
+        assert r.status_code == 404 and r.json()["ok"] is False
+        r = c.post("/api/agenda/delete", json={"id": e["id"], "kind": "event"})
+        assert r.status_code == 200 and r.json()["agenda"] == []
+        r = c.post("/api/agenda/delete", json={"id": "gone", "kind": "event"})
+        assert r.status_code == 404
+
+
 # ── first-launch name prompt ────────────────────────────────────────────────
 def test_needs_name_when_no_user_set(tmp_path):
     ui = UIController(user="", suggestion="Alex")

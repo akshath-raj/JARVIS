@@ -29,6 +29,28 @@ def test_todo_lifecycle(tmp_path):
     assert [t["text"] for t in s.list_todos()] == ["buy milk"]
 
 
+def test_remove_by_id(tmp_path):
+    # the HUD delete buttons pass the item's exact id back so the right row is
+    # removed even when two items share the same text.
+    s = TaskStore(str(tmp_path / "t.json"))
+    a = s.add_todo("call the bank")
+    b = s.add_todo("call the bank")            # duplicate text, distinct id
+    assert s.remove_todo_by_id(a["id"])["id"] == a["id"]
+    assert [t["id"] for t in s.list_todos()] == [b["id"]]
+    assert s.remove_todo_by_id("nope") is None
+
+    now = time.time()
+    r = s.add_reminder("standup", now + 3600)
+    assert s.cancel_reminder_by_id(r["id"])["id"] == r["id"]
+    assert s.list_reminders() == []            # cancelled → no longer pending
+    assert s.cancel_reminder_by_id(r["id"]) is None  # already cancelled
+
+    e = s.add_event("dentist", now + 7200)
+    assert s.remove_event_by_id(e["id"])["id"] == e["id"]
+    assert s.list_events() == []
+    assert s.remove_event_by_id("ghost") is None
+
+
 def test_store_persists_across_instances(tmp_path):
     p = str(tmp_path / "t.json")
     TaskStore(p).add_todo("persist me")

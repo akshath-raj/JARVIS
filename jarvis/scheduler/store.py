@@ -87,6 +87,16 @@ class TaskStore:
                 self._save()
             return todo
 
+    def remove_todo_by_id(self, tid: str) -> dict | None:
+        """Delete a to-do by its exact id (the HUD delete button passes it back)."""
+        with self._lock:
+            for t in self._data["todos"]:
+                if t.get("id") == tid:
+                    self._data["todos"].remove(t)
+                    self._save()
+                    return t
+            return None
+
     # ── reminders ─────────────────────────────────────────────────────────────
     def add_reminder(self, text: str, due_ts: float) -> dict:
         rem = {
@@ -129,6 +139,16 @@ class TaskStore:
                 self._save()
             return rem
 
+    def cancel_reminder_by_id(self, rid: str) -> dict | None:
+        """Cancel a pending reminder by its exact id (the HUD agenda ⌫ button)."""
+        with self._lock:
+            for r in self._data["reminders"]:
+                if r.get("id") == rid and not r.get("cancelled"):
+                    r["cancelled"] = True
+                    self._save()
+                    return r
+            return None
+
     # ── calendar events ───────────────────────────────────────────────────────
     def add_event(self, title: str, start_ts: float, end_ts: float | None = None) -> dict:
         ev = {
@@ -153,3 +173,13 @@ class TaskStore:
                 self._data["events"].remove(ev)
                 self._save()
             return ev
+
+    def remove_event_by_id(self, eid: str) -> dict | None:
+        """Delete a calendar event by its exact id (the HUD agenda ⌫ button)."""
+        with self._lock:
+            for ev in self._data["events"]:
+                if ev.get("id") == eid:
+                    self._data["events"].remove(ev)
+                    self._save()
+                    return ev
+            return None

@@ -117,6 +117,34 @@ class UIServer:
                 status_code=200 if ok else 404,
             )
 
+        async def todo_delete(request: Request):
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            data = data or {}
+            ok = controller.remove_todo(str(data.get("id", "")), str(data.get("text", "")))
+            st = controller.state(0)
+            return JSONResponse(
+                {"ok": ok, "todos": st["todos"], "agenda": st["agenda"]},
+                status_code=200 if ok else 404,
+            )
+
+        async def agenda_delete(request: Request):
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            data = data or {}
+            ok = controller.remove_agenda_item(
+                str(data.get("id", "")), str(data.get("kind", "")), str(data.get("text", ""))
+            )
+            st = controller.state(0)
+            return JSONResponse(
+                {"ok": ok, "todos": st["todos"], "agenda": st["agenda"]},
+                status_code=200 if ok else 404,
+            )
+
         async def favicon(request: Request):
             from starlette.responses import Response
 
@@ -161,6 +189,8 @@ class UIServer:
             Route("/api/user/name", set_name, methods=["POST"]),
             Route("/api/memory/add", memory_add, methods=["POST"]),
             Route("/api/memory/delete", memory_delete, methods=["POST"]),
+            Route("/api/todo/delete", todo_delete, methods=["POST"]),
+            Route("/api/agenda/delete", agenda_delete, methods=["POST"]),
             Route("/favicon.ico", favicon),
             WebSocketRoute("/ws", ws_endpoint),
             Mount("/static", app=StaticFiles(directory=str(_STATIC)), name="static"),

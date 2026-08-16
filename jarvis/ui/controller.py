@@ -204,6 +204,57 @@ class UIController:
             self._emit({"type": "memory"})
         return removed
 
+    # ── to-do + agenda edits (from the HUD's delete controls) ────────────────
+    def remove_todo(self, item_id: str = "", text: str = "") -> bool:
+        """Delete a to-do the HUD passed back (by id, falling back to text).
+        Also cancels a matching reminder so it can't ring later. Returns True if
+        anything was removed."""
+        if self._tasks is None:
+            return False
+        removed = None
+        try:
+            if item_id:
+                removed = self._tasks.remove_todo_by_id(item_id)
+            if removed is None and (text or "").strip():
+                removed = self._tasks.remove_todo(text)
+        except Exception:
+            return False
+        if not removed:
+            return False
+        # a to-do mirrored from a reminder — silence the reminder too
+        try:
+            self._tasks.cancel_reminder(removed.get("text", ""))
+        except Exception:
+            pass
+        self._emit({"type": "tasks"})
+        return True
+
+    def remove_agenda_item(self, item_id: str = "", kind: str = "", text: str = "") -> bool:
+        """Remove an agenda entry the HUD passed back: cancel a reminder or delete
+        a calendar event (by id, falling back to text). Returns True if removed."""
+        if self._tasks is None:
+            return False
+        removed = None
+        try:
+            if kind == "event":
+                removed = (self._tasks.remove_event_by_id(item_id) if item_id
+                           else self._tasks.remove_event(text))
+            else:  # reminder (default)
+                removed = (self._tasks.cancel_reminder_by_id(item_id) if item_id
+                           else self._tasks.cancel_reminder(text))
+                if removed:
+                    # drop the mirrored to-do so the two panels stay consistent
+                    try:
+                        self._tasks.remove_todo(removed.get("text", ""))
+                    except Exception:
+                        pass
+        except Exception:
+            return False
+        if not removed:
+            return False
+        self._emit({"type": "tasks"})
+        return True
+
     # ── data + polling (called from the web server) ─────────────────────────
     def _about(self) -> list[str]:
         if self._memory is None:
